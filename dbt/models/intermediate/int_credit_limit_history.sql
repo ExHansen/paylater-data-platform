@@ -1,14 +1,21 @@
 -- Credit-limit history (SCD type 2) rebuilt from the CDC log: one row per limit value an
 -- account has had, valid from the commit time of the change until the next change.
-with changes as (
-    select distinct on (lsn)
+-- Debezium stamps every snapshot record with the same LSN, so changes are keyed by account + LSN.
+with events as (
+    select
         (coalesce(after, before) ->> 'account_id')::uuid as account_id,
         (after ->> 'credit_limit')::numeric(18, 2) as credit_limit,
         to_timestamp(source_ts_ms / 1000.0) as changed_at,
-        lsn
+        lsn,
+        kafka_offset
     from {{ source('raw', 'cdc_credit_accounts') }}
     where op <> 'd'
-    order by lsn, kafka_offset
+),
+
+changes as (
+    select distinct on (account_id, lsn) account_id, credit_limit, changed_at, lsn
+    from events
+    order by account_id, lsn, kafka_offset
 ),
 
 with_previous as (

@@ -31,7 +31,12 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          if [ -f e2e-summary.md ]; then cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+          if [ -f e2e-summary.md ]; then
+            cat e2e-summary.md >> "$GITHUB_STEP_SUMMARY"
+            # also as an annotation: annotations are readable through the public API
+            body=$(sed -e 's/%/%25/g' e2e-summary.md | sed -e ':a;N;$!ba;s/\n/%0A/g')
+            echo "::notice title=e2e summary::${body}"
+          fi
       - name: Service logs as annotations
         if: failure()
         run: |

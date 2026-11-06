@@ -23,13 +23,36 @@ def test_new_purchase_near_limit_raises_alert_with_latency():
 
 
 def test_backfilled_purchase_updates_window_without_alert():
-    # A historical purchase inserted now (e.g. `pdp seed` after the stack is up) is not "new".
+    # A historical purchase committed now (e.g. `pdp seed` after the stack is up) is not "new":
+    # it was committed long after it was created.
+    late_commit = CREATE["source"]["ts_ms"] + 2 * 3600 * 1000
+    backfill = {**CREATE, "source": {**CREATE["source"], "ts_ms": late_commit}}
     window = AccountWindow()
-    two_hours_later = CREATE["source"]["ts_ms"] + 2 * 3600 * 1000
     _, alert = purchase_alert(
-        CREATE, window, Decimal("800000"), Decimal("0"), now_ms=two_hours_later
+        backfill, window, Decimal("800000"), Decimal("0"), now_ms=late_commit + 500
     )
     assert alert is None and len(window.events) == 1
+
+
+def test_purchase_processed_late_after_an_outage_still_alerts():  # review I5
+    # Committed on time but processed two hours later (the stream was down): still screened.
+    two_hours_later = CREATE["source"]["ts_ms"] + 2 * 3600 * 1000
+    _, alert = purchase_alert(
+        CREATE, AccountWindow(), Decimal("800000"), Decimal("0"), now_ms=two_hours_later
+    )
+    assert alert is not None and alert["latency_ms"] == 2 * 3600 * 1000
+
+
+def test_bad_events_are_skipped_and_counted_but_database_outages_are_not():  # review I4
+    from decimal import InvalidOperation
+
+    import psycopg
+
+    from pdp.stream.app import SkipBadEvents
+
+    skip = SkipBadEvents()
+    assert skip(KeyError("device_id")) and skip(InvalidOperation()) and skip.total == 2
+    assert not skip(psycopg.OperationalError("connection lost")) and skip.total == 2
 
 
 def test_snapshot_purchase_updates_window_without_alert():

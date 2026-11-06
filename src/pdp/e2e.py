@@ -77,6 +77,7 @@ class E2EResult:
     report_path: Path | None = None
     airflow_import_errors: str = ""
     airflow_hourly_ok: bool = False
+    airflow_paused: list[str] | None = None  # None: the DAG listing could not be read
     airflow_hourly_tail: str = ""
     fault_errors: dict[str, str] = field(default_factory=dict)
     check_run_seconds: list[float] = field(default_factory=list)
@@ -206,6 +207,18 @@ def raw_caught_up(dsn: str, counts: dict[str, int]) -> bool:
         )
 
 
+def paused_dags(listing: str) -> list[str] | None:
+    """DAG ids marked paused in `airflow dags list -o json` output (log lines tolerated)."""
+    start, end = listing.find("["), listing.rfind("]")
+    if start < 0 or end < start:
+        return None
+    try:
+        dags = json.loads(listing[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+    return [d["dag_id"] for d in dags if str(d.get("is_paused")).lower() == "true"]
+
+
 def _airflow(*args: str):
     from pdp.cli import compose
 
@@ -256,17 +269,18 @@ def collect(settings: Settings, result: E2EResult) -> None:
             for m in result.mttd
             if wh.execute(
                 "SELECT count(*) FROM ops.dq_results WHERE check_type = %s "
-                "AND status IN ('fail', 'warn') "
+                "AND (%s::text IS NULL OR target = %s) AND status IN ('fail', 'warn') "
                 "AND run_at >= %s - interval '90 seconds' AND run_at < %s",
-                (m.check_type, m.injected_at, m.injected_at),
+                (m.check_type, m.target, m.target, m.injected_at, m.injected_at),
             ).fetchone()[0]
         ]
         for m in result.mttd:
             rows = wh.execute(
                 "SELECT run_at, status, target, observed FROM ops.dq_results "
-                "WHERE check_type = %s AND run_at >= %s - interval '2 minutes' "
+                "WHERE check_type = %s AND (%s::text IS NULL OR target = %s) "
+                "AND run_at >= %s - interval '2 minutes' "
                 "AND run_at < %s + interval '6 minutes' ORDER BY run_at, target",
-                (m.check_type, m.injected_at, m.injected_at),
+                (m.check_type, m.target, m.target, m.injected_at, m.injected_at),
             ).fetchall()
             result.timelines[m.fault_type] = timeline_lines(rows, m.injected_at)
         for mart in MARTS:
@@ -286,6 +300,9 @@ def write_summary(result: E2EResult, path: Path) -> Path:
     def detected(m: MttdRow) -> str:
         return "not detected" if m.mttd_seconds is None else f"{m.mttd_seconds / 60:.1f} min"
 
+    def check(m: MttdRow) -> str:
+        return m.check_type if m.target is None else f"{m.check_type} ({m.target})"
+
     def before(m: MttdRow) -> str:
         return "already failing" if m.fault_type in result.already_failing else "passing"
 
@@ -299,6 +316,7 @@ def write_summary(result: E2EResult, path: Path) -> Path:
         f"| TWP90 (latest snapshot) | {_pct(result.twp90_latest)} |",
         f"| Airflow DAG import errors | {import_errors} |",
         f"| Airflow `pdp_hourly` test run | {'ok' if result.airflow_hourly_ok else 'failed'} |",
+        f"| Airflow DAGs paused | {_paused(result.airflow_paused)} |",
         f"| Regulatory report | {result.report_path or 'not built'} |",
         f"| Data-quality run time | {_run_time(result.check_run_seconds)} |",
         "",
@@ -312,10 +330,7 @@ def write_summary(result: E2EResult, path: Path) -> Path:
         "",
         "| Fault | Detected by | Check before the fault | Detected after |",
         "|---|---|---|---|",
-        *[
-            f"| {m.fault_type} | {m.check_type} | {before(m)} | {detected(m)} |"
-            for m in result.mttd
-        ],
+        *[f"| {m.fault_type} | {check(m)} | {before(m)} | {detected(m)} |" for m in result.mttd],
         "",
         "## Detection timelines",
         "",
@@ -355,6 +370,12 @@ def write_summary(result: E2EResult, path: Path) -> Path:
         ]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def _paused(paused: list[str] | None) -> str:
+    if paused is None:
+        return "could not read the DAG list"
+    return ", ".join(paused) or "none"
 
 
 def _run_time(seconds: list[float]) -> str:
@@ -440,6 +461,8 @@ def run(
     log("final dbt build, Airflow checks and report")
     if failure := _dbt_build(s):
         result.fault_errors["final_dbt_build"] = failure
+    listing = _airflow("dags", "list", "-o", "json")
+    result.airflow_paused = paused_dags(listing.stdout or "")
     errors = _airflow("dags", "list-import-errors")
     result.airflow_import_errors = (errors.stdout or "") + (errors.stderr or "")
     hourly = _airflow("dags", "test", "pdp_hourly")

@@ -20,3 +20,4 @@ def test_end_to_end():
     assert result.mart_counts["mart_delinquency"] > 0, summary
     assert result.report_path is not None and result.report_path.exists(), summary
     assert result.airflow_import_errors_ok and result.airflow_hourly_ok, summary
+    assert result.airflow_paused == [], summary  # every DAG is scheduled as shipped

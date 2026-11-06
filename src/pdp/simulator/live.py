@@ -227,25 +227,35 @@ class LiveSimulator:
         accounts = [
             AccountView(r[0], r[1], r[1] - r[2], r[3], tuple(r[4] or ()))
             for r in conn.execute(
+                # one aggregate pass per table (a per-account subquery rescans installments)
                 """
-                SELECT a.account_id, a.credit_limit,
-                       coalesce((SELECT sum(i.principal) FROM installments i
-                                 WHERE i.account_id = a.account_id AND i.status = 'unpaid'), 0),
-                       coalesce((SELECT max(t.monthly_rate) FROM transactions t
-                                 WHERE t.account_id = a.account_id), 0.03),
-                       (SELECT array_agg(DISTINCT t.device_id) FROM transactions t
-                        WHERE t.account_id = a.account_id)
-                FROM credit_accounts a WHERE a.status = 'active'
+                WITH open_principal AS (
+                    SELECT account_id, sum(principal) AS outstanding
+                    FROM installments WHERE status = 'unpaid' GROUP BY account_id
+                ), purchases AS (
+                    SELECT account_id, max(monthly_rate) AS rate,
+                           array_agg(DISTINCT device_id) AS devices
+                    FROM transactions GROUP BY account_id
+                )
+                SELECT a.account_id, a.credit_limit, coalesce(o.outstanding, 0),
+                       coalesce(p.rate, 0.03), p.devices
+                FROM credit_accounts a
+                LEFT JOIN open_principal o USING (account_id)
+                LEFT JOIN purchases p USING (account_id)
+                WHERE a.status = 'active'
                 """
             ).fetchall()
         ]
         today = datetime.now(WIB).date()
+        # Only installments falling due now are repaid: arrears from the history (late payers,
+        # defaulters) stay unpaid, as they would in a real book.
         due = [
             InstallmentView(*r)
             for r in conn.execute(
                 "SELECT installment_id, account_id, principal, interest FROM installments "
-                "WHERE status = 'unpaid' AND due_date <= %s ORDER BY due_date LIMIT 5000",
-                (today + timedelta(days=3),),
+                "WHERE status = 'unpaid' AND due_date BETWEEN %s AND %s "
+                "ORDER BY due_date LIMIT 5000",
+                (today - timedelta(days=3), today + timedelta(days=3)),
             ).fetchall()
         ]
         merchants = [r[0] for r in conn.execute("SELECT merchant_id FROM merchants").fetchall()]

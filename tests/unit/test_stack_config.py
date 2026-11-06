@@ -55,3 +55,15 @@ def test_connector_config():
 def test_devcontainer_requests_enough_machine():
     dc = json.loads(Path(".devcontainer/devcontainer.json").read_text(encoding="utf-8"))
     assert dc["hostRequirements"]["cpus"] >= 4 and 8501 in dc["forwardPorts"]
+
+
+def test_kafka_keeps_its_log_in_a_named_volume():  # review C1: topics + offsets live with pgdata
+    kafka = COMPOSE["services"]["kafka"]
+    log_dir = kafka["environment"]["KAFKA_LOG_DIRS"]
+    mounts = [v.split(":") for v in kafka["volumes"]]
+    assert any(target == log_dir and source in COMPOSE["volumes"] for source, target in mounts)
+
+
+def test_airflow_dags_start_unpaused():  # review I3: otherwise nothing is ever scheduled
+    env = COMPOSE["services"]["airflow"]["environment"]
+    assert env["AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION"] == "false"

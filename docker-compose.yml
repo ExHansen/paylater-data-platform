@@ -66,7 +66,14 @@ services:
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_NUM_PARTITIONS: 1
       KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+      # Topics, consumer offsets and Connect offsets live in a volume, so they survive
+      # `pdp down` exactly as long as the warehouse in pgdata does (the loader's dedup key is
+      # the Kafka offset; a fresh Kafka next to an old warehouse would reuse offsets).
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
     ports: ["29092:29092"]
+    volumes:
+      - kafkadata:/var/lib/kafka/data
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
       interval: 10s
@@ -162,6 +169,7 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://pdp:pdp@postgres:5432/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
       AIRFLOW__CORE__DEFAULT_TIMEZONE: Asia/Jakarta
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
       PDP_DBT_HOST: postgres
@@ -183,4 +191,5 @@ services:
 
 volumes:
   pgdata:
+  kafkadata:
   streamstate:
