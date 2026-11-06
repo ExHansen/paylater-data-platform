@@ -40,9 +40,7 @@ def load_report_data(conn, month: str) -> ReportData:
         "dpd_90_plus FROM marts.mart_delinquency WHERE as_of_date = %s ORDER BY province",
         (last,),
     ).fetchall()
-    by_province = [
-        {"province": r[0], "outstanding": r[1], "dpd_90_plus": r[6]} for r in rows
-    ]
+    by_province = [{"province": r[0], "outstanding": r[1], "dpd_90_plus": r[6]} for r in rows]
     buckets = {name: sum((r[i + 2] for r in rows), Decimal(0)) for i, name in enumerate(BUCKETS)}
     portfolio = conn.execute(
         "SELECT outstanding_principal, active_borrowers FROM marts.mart_portfolio_daily "
