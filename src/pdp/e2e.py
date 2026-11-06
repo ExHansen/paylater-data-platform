@@ -144,14 +144,34 @@ def _inject(settings: Settings, fault: str, opts: dict, errors: dict, log) -> No
         log(f"injecting {fault} failed: {exc}")
 
 
-def _dbt_build(settings: Settings) -> bool:
+def _dbt_build(settings: Settings) -> str | None:
+    """Run `dbt build`; None on success, otherwise what failed."""
     from dbt.cli.main import dbtRunner
 
     from pdp.cli import dbt_env
 
     for key, value in dbt_env(settings.wh_dsn).items():
         os.environ.setdefault(key, value)
-    return dbtRunner().invoke(["build", "--project-dir", "dbt", "--profiles-dir", "dbt"]).success
+    res = dbtRunner().invoke(["build", "--project-dir", "dbt", "--profiles-dir", "dbt"])
+    if res.success:
+        return None
+    if res.exception is not None:
+        return f"{type(res.exception).__name__}: {res.exception}"
+    failed = [
+        f"{r.node.unique_id}: {r.status} ({r.message})"
+        for r in getattr(res.result, "results", [])
+        if str(r.status) in ("error", "fail")
+    ]
+    return "; ".join(failed[:10]) or "dbt build failed"
+
+
+def raw_caught_up(dsn: str, counts: dict[str, int]) -> bool:
+    """Every seeded table has at least as many raw rows as were seeded."""
+    with connect(dsn) as wh:
+        return all(
+            wh.execute(f"SELECT count(*) FROM raw.cdc_{table}").fetchone()[0] >= n
+            for table, n in counts.items()
+        )
 
 
 def _airflow(*args: str):
@@ -290,16 +310,10 @@ def run(
     counts = seed(s, seed_months, s.seed)
     seeded_at = datetime.now(UTC)  # every seeded row was created before this moment
     log(f"seeded {counts}")
-    wait_for(
-        "seeded transactions to reach raw",
-        lambda: (
-            scalar(s.wh_dsn, "SELECT count(*) FROM raw.cdc_transactions") >= counts["transactions"]
-        ),
-        timeout_s=600,
-    )
+    wait_for("the seeded history to reach raw", lambda: raw_caught_up(s.wh_dsn, counts), 600)
     log("history loaded; first dbt build")
-    if not _dbt_build(s):
-        raise RuntimeError("initial dbt build failed")
+    if failure := _dbt_build(s):
+        raise RuntimeError(f"initial dbt build failed: {failure}")
     wait_for(
         "live traffic from the simulator",
         lambda: (
@@ -331,8 +345,8 @@ def run(
     run_checks(s)  # one last pass
 
     log("final dbt build, Airflow checks and report")
-    if not _dbt_build(s):
-        result.fault_errors["final_dbt_build"] = "dbt build failed"
+    if failure := _dbt_build(s):
+        result.fault_errors["final_dbt_build"] = failure
     errors = _airflow("dags", "list-import-errors")
     result.airflow_import_errors = (errors.stdout or "") + (errors.stderr or "")
     hourly = _airflow("dags", "test", "pdp_hourly")

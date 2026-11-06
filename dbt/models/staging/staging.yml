@@ -77,6 +77,10 @@ models:
               arguments:
                 to: ref('stg_transactions')
                 field: txn_id
+              config:
+                # Topics load independently, so a new installment can land seconds before its
+                # purchase. Recent rows are left to the reconciliation check.
+                where: "updated_at < current_timestamp - interval '10 minutes'"
       - name: status
         data_tests:
           - accepted_values:
