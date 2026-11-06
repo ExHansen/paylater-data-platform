@@ -1,0 +1,13 @@
+# Expected CDC fields for public.installments. A difference raises the schema_drift check.
+table: installments
+columns:
+  - installment_id
+  - txn_id
+  - account_id
+  - seq
+  - due_date
+  - principal
+  - interest
+  - status
+  - paid_at
+  - updated_at

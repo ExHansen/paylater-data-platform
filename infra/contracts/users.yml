@@ -1,0 +1,12 @@
+# Expected CDC fields for public.users. A difference raises the schema_drift check.
+table: users
+columns:
+  - user_id
+  - full_name
+  - nik
+  - phone
+  - province
+  - city
+  - kyc_status
+  - created_at
+  - updated_at

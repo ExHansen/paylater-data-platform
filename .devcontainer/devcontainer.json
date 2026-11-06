@@ -1,0 +1,24 @@
+{
+  "name": "paylater-data-platform",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb"
+  },
+  "postCreateCommand": "pip install --user uv==0.11.22 && uv sync --all-extras",
+  "forwardPorts": [
+    8080,
+    8501
+  ],
+  "portsAttributes": {
+    "8080": {
+      "label": "Airflow"
+    },
+    "8501": {
+      "label": "Dashboard"
+    }
+  }
+}

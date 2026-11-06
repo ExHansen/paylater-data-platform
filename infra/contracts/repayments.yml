@@ -1,0 +1,9 @@
+# Expected CDC fields for public.repayments. A difference raises the schema_drift check.
+table: repayments
+columns:
+  - repayment_id
+  - installment_id
+  - account_id
+  - amount
+  - method
+  - paid_at

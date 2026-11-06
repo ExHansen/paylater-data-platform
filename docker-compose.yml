@@ -1,0 +1,146 @@
+# paylater-data-platform runtime stack.
+#   core: postgres, kafka, debezium connect, simulator, loader, stream   (~3.3 GB RAM)
+#   full: core + airflow + dashboard                                      (~5.7 GB RAM)
+# Usage: pdp up --profile core|full   (or: docker compose --profile core up -d --wait)
+name: pdp
+
+x-app-env: &app-env
+  PDP_APP_DSN: postgresql://pdp:pdp@postgres:5432/paylater_app
+  PDP_WH_DSN: postgresql://pdp:pdp@postgres:5432/warehouse
+  PDP_KAFKA_BOOTSTRAP: kafka:9092
+  PDP_PII_SALT: ${PDP_PII_SALT:-change-me}
+  PDP_SEED: ${PDP_SEED:-42}
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/app.Dockerfile
+  image: pdp-app:local
+  environment: *app-env
+  depends_on:
+    postgres:
+      condition: service_healthy
+    kafka:
+      condition: service_healthy
+  restart: unless-stopped
+  mem_limit: 256m
+  profiles: [core, full]
+
+services:
+  postgres:
+    image: postgres:16.15
+    profiles: [core, full]
+    environment:
+      POSTGRES_USER: pdp
+      POSTGRES_PASSWORD: pdp
+      POSTGRES_DB: paylater_app
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=4",
+              "-c", "max_wal_senders=4"]
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pdp -d warehouse"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    mem_limit: 768m
+
+  kafka:
+    image: apache/kafka:4.3.2
+    profiles: [core, full]
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    ports: ["29092:29092"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+    mem_limit: 1g
+
+  connect:
+    image: quay.io/debezium/connect:3.7.0.Final
+    profiles: [core, full]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      BOOTSTRAP_SERVERS: kafka:9092
+      GROUP_ID: pdp-connect
+      CONFIG_STORAGE_TOPIC: connect_configs
+      OFFSET_STORAGE_TOPIC: connect_offsets
+      STATUS_STORAGE_TOPIC: connect_statuses
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
+      HEAP_OPTS: "-Xms256m -Xmx512m"
+    ports: ["8083:8083"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:8083/connectors > /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    mem_limit: 1g
+
+  connect-init:
+    # One-shot: registers the Postgres CDC connector once Kafka Connect answers.
+    image: quay.io/debezium/connect:3.7.0.Final
+    profiles: [core, full]
+    depends_on:
+      connect:
+        condition: service_healthy
+    entrypoint: ["bash", "/infra/connect/register.sh"]
+    environment:
+      CONNECT_URL: http://connect:8083
+    volumes:
+      - ./infra/connect:/infra/connect:ro
+    restart: "no"
+    mem_limit: 128m
+
+  simulator:
+    <<: *app
+    command: ["pdp", "live", "--rate", "${PDP_LIVE_RATE:-5}"]
+
+  loader:
+    <<: *app
+    command: ["python", "-m", "pdp.loader.app"]
+
+  stream:
+    <<: *app
+    command: ["python", "-m", "pdp.stream.app"]
+    environment:
+      <<: *app-env
+      PDP_STATE_DIR: /state
+    volumes:
+      - streamstate:/state
+
+  dashboard:
+    <<: *app
+    profiles: [full]
+    command: ["streamlit", "run", "src/pdp/dashboard/app.py", "--server.port", "8501",
+              "--server.headless", "true"]
+    ports: ["8501:8501"]
+    mem_limit: 384m
+
+volumes:
+  pgdata:
+  streamstate:

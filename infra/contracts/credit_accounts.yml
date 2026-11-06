@@ -1,0 +1,10 @@
+# Expected CDC fields for public.credit_accounts. A difference raises the schema_drift check.
+table: credit_accounts
+columns:
+  - account_id
+  - user_id
+  - credit_limit
+  - status
+  - risk_grade
+  - created_at
+  - updated_at
