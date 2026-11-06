@@ -100,9 +100,10 @@ what was due, and that the DPD buckets add up to the total.
 | Table | Grain | Columns |
 |---|---|---|
 | `risk_features` | account | `txn_count_10m`, `txn_amount_10m`, `txn_count_1h`, `txn_amount_1h`, `utilization`, `is_new_device`, `updated_at` |
-| `risk_alerts` | purchase that broke a rule | `alert_id`, `account_id`, `txn_id`, `rules` (text[]), `amount`, `source_ts_ms`, `latency_ms` (alert time − source commit time), `created_at` |
+| `risk_alerts` | purchase that broke a rule | `alert_id` (derived from `txn_id`, so a redelivered purchase cannot alert twice), `account_id`, `txn_id`, `rules` (text[]), `amount`, `source_ts_ms`, `latency_ms` (alert time − source commit time), `created_at` |
 | `account_exposure` | account | `exposure`: open principal. Approved purchases add their amount; refunds and paid instalments subtract |
 | `account_limits` | account | latest `credit_limit` seen on the CDC stream |
+| `exposure_changes` | applied change | `source_table`, `row_id`, `lsn`, `applied_at`: changes already applied to `account_exposure`, so a redelivered event is applied once |
 
 Risk rules: **RR1_velocity** 5+ purchases in 10 minutes · **RR2_near_limit** amount > 80% of
 the limit · **RR3_new_device_high** a device not seen on the account in 30 days and amount >

@@ -20,11 +20,14 @@ import psycopg
 from pdp.config import Settings
 from pdp.loader.envelope import CdcEvent, decode_row
 from pdp.stream.exposure import apply_delta, exposure_delta
-from pdp.stream.features import AccountWindow, Features, from_state, to_state, update
+from pdp.stream.features import AccountWindow, Features, from_state, has_seen, to_state, update
 from pdp.stream.rules import evaluate, utilization
 
 log = logging.getLogger("pdp.stream")
 BACKFILL_AGE_MS = 60 * 60 * 1000  # purchases older than this when processed raise no alerts
+ALERT_NAMESPACE = uuid.UUID("4f6b9a52-0c1e-4b7a-9d55-7a3c2e8b1f60")
+# Exposure changes are keyed by the changed row and its LSN, so redelivered events apply once.
+ROW_ID = {"transactions": "txn_id", "installments": "installment_id"}
 
 
 def is_envelope(value) -> bool:
@@ -50,11 +53,17 @@ def purchase_alert(
     credit_limit: Decimal | None,
     exposure: Decimal | None,
     now_ms: int,
-) -> tuple[Features, dict | None]:
-    """Update the account window with one purchase; build an alert for new purchases only."""
+) -> tuple[Features | None, dict | None]:
+    """Update the account window with one purchase; build an alert for new purchases only.
+
+    A purchase already in the window is a redelivery: nothing changes, (None, None).
+    """
     after = decode_row("transactions", value["after"])
+    txn_id = str(after["txn_id"])
+    if has_seen(window, txn_id):
+        return None, None
     ts_ms = int(after["created_at"].timestamp() * 1000)
-    features = update(window, ts_ms, after["amount"], after["device_id"])
+    features = update(window, ts_ms, after["amount"], after["device_id"], txn_id)
     if value["op"] != "c" or now_ms - ts_ms > BACKFILL_AGE_MS:
         # snapshot rows and purchases dated long before now (backfills) only feed the window
         return features, None
@@ -63,7 +72,7 @@ def purchase_alert(
         return features, None
     source_ts_ms = int(value["source"]["ts_ms"])
     return features, {
-        "alert_id": str(uuid.uuid4()),
+        "alert_id": str(uuid.uuid5(ALERT_NAMESPACE, txn_id)),
         "account_id": after["account_id"],
         "txn_id": after["txn_id"],
         "rules": rules,
@@ -86,9 +95,20 @@ class OnlineStore:
         return self._conn
 
     def apply_exposure(self, table: str, value: dict) -> None:
-        delta = exposure_delta(to_event(table, value))
-        if delta is not None:
-            apply_delta(self.conn(), *delta)
+        event = to_event(table, value)
+        delta = exposure_delta(event)
+        if delta is None:
+            return
+        row = event.after or event.before or {}
+        conn = self.conn()
+        with conn.transaction():
+            first_time = conn.execute(
+                "INSERT INTO online.exposure_changes (source_table, row_id, lsn) "
+                "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                (table, str(row[ROW_ID[table]]), event.lsn),
+            ).rowcount
+            if first_time:
+                apply_delta(conn, *delta)
 
     def upsert_limit(self, value: dict) -> None:
         after = value.get("after")
@@ -162,6 +182,8 @@ def build_app(settings: Settings):
             store.limit_and_exposure(account_id) if value["op"] == "c" else (None, None)
         )
         features, alert = purchase_alert(value, window, limit, exposure, int(time.time() * 1000))
+        if features is None:  # redelivered purchase
+            return None
         state.set("window", to_state(window))
         if value["op"] == "c":
             store.upsert_features(account_id, features, utilization(exposure, limit))
