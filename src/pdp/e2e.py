@@ -78,6 +78,7 @@ class E2EResult:
     airflow_import_errors: str = ""
     airflow_hourly_ok: bool = False
     airflow_paused: list[str] | None = None  # None: the DAG listing could not be read
+    airflow_listing_tail: str = ""
     airflow_hourly_tail: str = ""
     fault_errors: dict[str, str] = field(default_factory=dict)
     check_run_seconds: list[float] = field(default_factory=list)
@@ -208,15 +209,21 @@ def raw_caught_up(dsn: str, counts: dict[str, int]) -> bool:
 
 
 def paused_dags(listing: str) -> list[str] | None:
-    """DAG ids marked paused in `airflow dags list -o json` output (log lines tolerated)."""
-    start, end = listing.find("["), listing.rfind("]")
-    if start < 0 or end < start:
-        return None
-    try:
-        dags = json.loads(listing[start : end + 1])
-    except json.JSONDecodeError:
-        return None
-    return [d["dag_id"] for d in dags if str(d.get("is_paused")).lower() == "true"]
+    """DAG ids marked paused in `airflow dags list -o json` output; None if there is no list.
+
+    Log lines (which may start with "[timestamp]") around the JSON are skipped.
+    """
+    decoder = json.JSONDecoder()
+    for start, char in enumerate(listing):
+        if char != "[":
+            continue
+        try:
+            dags, _ = decoder.raw_decode(listing, start)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(dags, list) and all(isinstance(d, dict) and "dag_id" in d for d in dags):
+            return [d["dag_id"] for d in dags if str(d.get("is_paused")).lower() == "true"]
+    return None
 
 
 def _airflow(*args: str):
@@ -320,6 +327,12 @@ def write_summary(result: E2EResult, path: Path) -> Path:
         f"| Regulatory report | {result.report_path or 'not built'} |",
         f"| Data-quality run time | {_run_time(result.check_run_seconds)} |",
         "",
+        # errors right after the headline numbers: CI annotations keep only the first ~4 KB
+        *(
+            ["## Errors", "", *[f"- {k}: {v}" for k, v in result.fault_errors.items()], ""]
+            if result.fault_errors
+            else []
+        ),
         "## Risk alerts by rule",
         "",
         "| Rule | Alerts |",
@@ -354,9 +367,8 @@ def write_summary(result: E2EResult, path: Path) -> Path:
         "",
         *[f"- `{name}`: {count}" for name, count in result.mart_counts.items()],
     ]
-    if result.fault_errors:
-        lines += ["", "## Errors", ""]
-        lines += [f"- {name}: {error}" for name, error in result.fault_errors.items()]
+    if result.airflow_paused is None and result.airflow_listing_tail:
+        lines += ["", "## Airflow DAG listing", "", "```", result.airflow_listing_tail, "```"]
     if not result.airflow_import_errors_ok:
         lines += ["", "## Airflow import errors", "", "```", result.airflow_import_errors, "```"]
     if not result.airflow_hourly_ok and result.airflow_hourly_tail:
@@ -463,6 +475,8 @@ def run(
         result.fault_errors["final_dbt_build"] = failure
     listing = _airflow("dags", "list", "-o", "json")
     result.airflow_paused = paused_dags(listing.stdout or "")
+    if result.airflow_paused is None:
+        result.airflow_listing_tail = ((listing.stdout or "") + (listing.stderr or ""))[-1500:]
     errors = _airflow("dags", "list-import-errors")
     result.airflow_import_errors = (errors.stdout or "") + (errors.stderr or "")
     hourly = _airflow("dags", "test", "pdp_hourly")

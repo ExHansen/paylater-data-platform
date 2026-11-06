@@ -1,3 +1,4 @@
+import os
 from datetime import date
 from decimal import Decimal
 
@@ -69,3 +70,15 @@ def test_excel_layout(tmp_path):
     assert "not an official format" in wb["Summary"]["A1"].value
     values = [cell.value for row in wb["By province"].iter_rows() for cell in row]
     assert "Bali" in values and "DKI Jakarta" in values
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file permissions")
+def test_report_replaces_a_file_another_user_wrote(tmp_path):
+    # The Airflow container (another uid) may have written the same month into the shared folder;
+    # the report is written beside it and moved into place, which needs only the folder's rights.
+    target = tmp_path / "r.xlsx"
+    target.write_bytes(b"old")
+    target.chmod(0o444)
+    write_excel(sample(), target)
+    assert target.read_bytes()[:2] == b"PK"  # a real workbook replaced the old file
+    assert list(tmp_path.iterdir()) == [target]  # no temporary file left behind

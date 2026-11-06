@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import os
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -122,7 +123,14 @@ def write_excel(data: ReportData, path: Path) -> Path:
     for sheet in wb.worksheets:
         for cell in sheet[1 if sheet.title != "Summary" else 3]:
             cell.font = Font(bold=True)
-    wb.save(path)
+    # Write beside the target and move it into place: never a half-written report, and a file
+    # left by another user (e.g. the Airflow container) is replaced with the folder's rights.
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        wb.save(tmp)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
     return path
 
 

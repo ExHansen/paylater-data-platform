@@ -87,3 +87,22 @@ def test_summary_names_the_rule_a_fault_is_matched_on(tmp_path: Path):
     row = MttdRow(3, "invalid_tenor", "invalid_values", T0, T0, 0.0, "transactions.tenor_months")
     text = write_summary(E2EResult(mttd=[row]), tmp_path / "s.md").read_text(encoding="utf-8")
     assert "| invalid_tenor | invalid_values (transactions.tenor_months) |" in text
+
+
+def test_paused_dags_skip_bracketed_log_lines():
+    listing = (
+        "[2026-11-06T09:00:00Z] {dagbag.py:1} INFO - Filling up the DagBag\n"
+        '[{"dag_id": "pdp_hourly", "is_paused": false}, '
+        '{"dag_id": "pdp_daily_dq", "is_paused": true}]\n'
+    )
+    assert paused_dags(listing) == ["pdp_daily_dq"]
+    assert paused_dags("[]") == []
+
+
+def test_errors_come_before_the_long_sections(tmp_path: Path):
+    result = E2EResult(
+        fault_errors={"regulatory_report": "PermissionError: denied"},
+        timelines={"loader_stall": ["+1.5 min  fail  transactions: lag 1.4 min"]},
+    )
+    text = write_summary(result, tmp_path / "s.md").read_text(encoding="utf-8")
+    assert text.index("PermissionError") < text.index("## Risk alerts by rule")
