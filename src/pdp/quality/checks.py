@@ -92,7 +92,10 @@ def check_lsn_regression(settings, wh, app) -> list[CheckResult]:
             wh,
             f"SELECT count(*) FROM raw.cdc_{table} AS r WHERE r.ingested_at > now() - {RECENT} "
             f"AND EXISTS (SELECT 1 FROM raw.cdc_{table} AS o WHERE o.pk = r.pk AND o.id < r.id "
-            "AND o.lsn > r.lsn)",
+            "AND o.lsn > r.lsn) "
+            # a change loaded before is a duplicate (raw_duplicate_lsn), not a late version
+            f"AND NOT EXISTS (SELECT 1 FROM raw.cdc_{table} AS d WHERE d.pk = r.pk "
+            "AND d.lsn = r.lsn AND d.id < r.id)",
         )
         results.append(
             CheckResult("lsn_regression", table, "warn" if n else "pass", f"{n} out-of-order", "0")
@@ -124,19 +127,22 @@ def check_schema_drift(settings, wh, app) -> list[CheckResult]:
 
 
 def check_invalid_values(settings, wh, app) -> list[CheckResult]:
-    """Recent purchases with a non-positive amount or a tenor outside 1/3/6/12."""
+    """Recent purchases breaking a validity rule, one result per rule (column)."""
     tenors = ",".join(f"'{t}'" for t in VALID_TENORS)
-    n = _scalar(
-        wh,
-        "SELECT count(DISTINCT pk) FROM raw.cdc_transactions "
-        f"WHERE after IS NOT NULL AND ingested_at > now() - {RECENT} "
-        f"AND ((after->>'amount')::numeric <= 0 OR after->>'tenor_months' NOT IN ({tenors}))",
-    )
-    return [
-        CheckResult(
-            "invalid_values", "transactions", "fail" if n else "pass", f"{n} invalid rows", "0"
+    rules = {
+        "transactions.amount": "(after->>'amount')::numeric <= 0",
+        "transactions.tenor_months": f"after->>'tenor_months' NOT IN ({tenors})",
+    }
+    results = []
+    for target, invalid in rules.items():
+        n = _scalar(
+            wh,
+            "SELECT count(DISTINCT pk) FROM raw.cdc_transactions "
+            f"WHERE after IS NOT NULL AND ingested_at > now() - {RECENT} AND {invalid}",
         )
-    ]
+        status: Status = "fail" if n else "pass"
+        results.append(CheckResult("invalid_values", target, status, f"{n} invalid rows", "0"))
+    return results
 
 
 def check_volume_anomaly(settings, wh, app) -> list[CheckResult]:

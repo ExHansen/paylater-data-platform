@@ -24,7 +24,10 @@ from pdp.stream.features import AccountWindow, Features, from_state, has_seen, t
 from pdp.stream.rules import evaluate, utilization
 
 log = logging.getLogger("pdp.stream")
-BACKFILL_AGE_MS = 60 * 60 * 1000  # purchases older than this when processed raise no alerts
+# A purchase committed more than an hour after it was created is a backfill (e.g. `pdp seed`)
+# and raises no alert. Processing delay does not count: after an outage, purchases are still
+# screened, with their true latency.
+BACKFILL_AGE_MS = 60 * 60 * 1000
 ALERT_NAMESPACE = uuid.UUID("4f6b9a52-0c1e-4b7a-9d55-7a3c2e8b1f60")
 # Exposure changes are keyed by the changed row and its LSN, so redelivered events apply once.
 ROW_ID = {"transactions": "txn_id", "installments": "installment_id"}
@@ -64,13 +67,13 @@ def purchase_alert(
         return None, None
     ts_ms = int(after["created_at"].timestamp() * 1000)
     features = update(window, ts_ms, after["amount"], after["device_id"], txn_id)
-    if value["op"] != "c" or now_ms - ts_ms > BACKFILL_AGE_MS:
+    source_ts_ms = int(value["source"]["ts_ms"])
+    if value["op"] != "c" or source_ts_ms - ts_ms > BACKFILL_AGE_MS:
         # snapshot rows and purchases dated long before now (backfills) only feed the window
         return features, None
     rules = evaluate(features, after["amount"], credit_limit, exposure)
     if not rules:
         return features, None
-    source_ts_ms = int(value["source"]["ts_ms"])
     return features, {
         "alert_id": str(uuid.uuid5(ALERT_NAMESPACE, txn_id)),
         "account_id": after["account_id"],
@@ -80,6 +83,28 @@ def purchase_alert(
         "source_ts_ms": source_ts_ms,
         "latency_ms": max(0, now_ms - source_ts_ms),
     }
+
+
+class SkipBadEvents:
+    """Quix `on_processing_error`: skip and count events that cannot be processed.
+
+    Data errors (a missing or malformed field) skip the event so one bad record does not stop
+    risk screening; anything else (e.g. the database is down) stays fatal and the container
+    restarts and retries from the last committed offset.
+    """
+
+    DATA_ERRORS = (KeyError, TypeError, ValueError, ArithmeticError, psycopg.DataError)
+
+    def __init__(self) -> None:
+        self.total = 0
+
+    def __call__(self, exc: Exception, row=None, logger=None) -> bool:
+        if not isinstance(exc, self.DATA_ERRORS):
+            return False
+        self.total += 1
+        log.warning("skipped event (%s: %s); stream_skipped_total=%d", type(exc).__name__, exc,
+                    self.total)  # fmt: skip
+        return True
 
 
 class OnlineStore:
@@ -164,6 +189,7 @@ def build_app(settings: Settings):
         consumer_group="pdp-risk",
         auto_offset_reset="earliest",
         state_dir=os.environ.get("PDP_STATE_DIR", "state"),
+        on_processing_error=SkipBadEvents(),
     )
     store = OnlineStore(settings.wh_dsn)
     prefix = settings.topic_prefix

@@ -40,6 +40,11 @@ FAULT_CHECK = {
     "reconciliation_gap": "reconciliation",
 }
 FAULTS = tuple(FAULT_CHECK)
+# Faults that share a check are told apart by the check's target (one result per rule).
+FAULT_TARGET = {
+    "invalid_amount": "transactions.amount",
+    "invalid_tenor": "transactions.tenor_months",
+}
 
 
 @dataclass
@@ -165,6 +170,14 @@ def _duplicate_events(ctx: FaultContext, **_) -> dict:
     return {"reproduced": _produce(ctx, "transactions", rows)}
 
 
+def late_version(row: dict) -> dict:
+    """An older version of a row that was never delivered: the stored change, one LSN earlier.
+
+    Re-sending the stored change itself would be an exact duplicate (a different fault).
+    """
+    return {**row, "lsn": row["lsn"] - 1}
+
+
 def _out_of_order(ctx: FaultContext, wait_s: float = 60, **_) -> dict:
     txn_id = ctx.app_conn.execute(
         "SELECT txn_id FROM transactions ORDER BY created_at DESC LIMIT 1"
@@ -188,7 +201,7 @@ def _out_of_order(ctx: FaultContext, wait_s: float = 60, **_) -> dict:
         ctx.sleep(2)
     if len(rows) < 2:
         raise RuntimeError("both updates did not reach raw in time; is the loader running?")
-    return {"txn_id": txn_id, "reproduced": _produce(ctx, "transactions", rows[:1])}
+    return {"txn_id": txn_id, "reproduced": _produce(ctx, "transactions", [late_version(rows[0])])}
 
 
 def _stop_service(service: str):

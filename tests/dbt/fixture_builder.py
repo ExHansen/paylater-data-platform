@@ -48,6 +48,9 @@ def money(x) -> str:
     return f"{Decimal(x):.2f}"
 
 
+SNAPSHOT_LSN = 1000
+
+
 class Recorder:
     def __init__(self):
         self.lsn = 1000
@@ -55,7 +58,11 @@ class Recorder:
         self.rows: dict[str, list[dict]] = defaultdict(list)
 
     def emit(self, table, op, pk_field, before, after, at: datetime) -> dict:
-        self.lsn += 10
+        if op == "r":  # Debezium stamps every snapshot record with the snapshot's LSN
+            lsn = SNAPSHOT_LSN
+        else:
+            self.lsn += 10
+            lsn = self.lsn
         key = (after or before)[pk_field]
         row = {
             "op": op,
@@ -63,7 +70,7 @@ class Recorder:
             "before": before,
             "after": after,
             "source_ts_ms": int(at.timestamp() * 1000),
-            "lsn": self.lsn,
+            "lsn": lsn,
         }
         self._append(table, row)
         return row

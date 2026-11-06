@@ -1,7 +1,14 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from pdp.e2e import OVERRIDES, SCHEDULE, E2EResult, timeline_lines, write_summary
+from pdp.e2e import (
+    OVERRIDES,
+    SCHEDULE,
+    E2EResult,
+    paused_dags,
+    timeline_lines,
+    write_summary,
+)
 from pdp.quality.mttd import MttdRow
 from pdp.simulator.faults import FAULTS
 
@@ -64,3 +71,19 @@ def test_summary_reports_check_run_time_and_timelines(tmp_path: Path):
     text = write_summary(result, tmp_path / "s.md").read_text(encoding="utf-8")
     assert "| Data-quality run time | median 14 s, max 30 s (3 runs) |" in text
     assert "<summary>loader_stall</summary>" in text and "+1.5 min  fail" in text
+
+
+def test_paused_dags_are_read_from_the_airflow_listing():  # review I3
+    listing = (
+        "some log line\n"
+        '[{"dag_id": "pdp_hourly", "is_paused": "False"}, '
+        '{"dag_id": "pdp_daily_dq", "is_paused": "True"}]\n'
+    )
+    assert paused_dags(listing) == ["pdp_daily_dq"]
+    assert paused_dags("no json here") is None
+
+
+def test_summary_names_the_rule_a_fault_is_matched_on(tmp_path: Path):
+    row = MttdRow(3, "invalid_tenor", "invalid_values", T0, T0, 0.0, "transactions.tenor_months")
+    text = write_summary(E2EResult(mttd=[row]), tmp_path / "s.md").read_text(encoding="utf-8")
+    assert "| invalid_tenor | invalid_values (transactions.tenor_months) |" in text

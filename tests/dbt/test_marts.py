@@ -77,3 +77,16 @@ def test_collections_on_time_share(dbt_built):
     ).fetchone()
     # R1 (T2-1: 400,000 + 36,000), R2 and R4 (T3: 1,000,000 + 180,000 each); R3 was deleted
     assert rows == (3, Decimal("2796000.00"))
+
+
+@pytest.mark.pg
+def test_scd2_keeps_every_snapshotted_account(dbt_built):  # review I2: snapshot rows share a LSN
+    rows = dbt_built.execute(
+        "select account_id::text, credit_limit from intermediate.int_credit_limit_history "
+        "where valid_to is null order by credit_limit"
+    ).fetchall()
+    assert rows == [
+        (uid("A1"), Decimal("7500000.00")),
+        (uid("A3"), Decimal("8000000.00")),
+        (uid("A2"), Decimal("10000000.00")),
+    ]

@@ -27,8 +27,11 @@ catch them. All tables use `REPLICA IDENTITY FULL` so updates and deletes carry 
 | `installments` | one monthly instalment of a purchase | `installment_id`, `txn_id`, `account_id`, `seq`, `due_date`, `principal`, `interest`, `status` (unpaid/paid), `paid_at`, `updated_at` |
 | `repayments` | one payment of an instalment | `repayment_id`, `installment_id`, `account_id`, `amount`, `method`, `paid_at` |
 
-`full_name`, `nik` and `phone` are personal data. They never leave the source unhashed: staging
-replaces `nik` and `phone` with salted SHA-256 hashes and drops `full_name`.
+`full_name`, `nik` and `phone` are personal data. The Kafka topics and `raw.cdc_users` carry
+them as the source has them, so `raw` is the restricted landing zone. From staging on, `nik` and
+`phone` are salted SHA-256 hashes and `full_name` is dropped: marts, the dashboard and the report
+never see them. The salt is compiled into the `stg_users` view definition. A production setup
+would hash at the connector (Debezium column masking) or keep the salt out of the catalog.
 
 ## Raw: `warehouse.raw`
 
@@ -41,7 +44,7 @@ One append-only table per source table, written by the loader exactly as Debeziu
 | `pk` | primary key of the source row (jsonb) |
 | `before`, `after` | old and new row images (jsonb; `numeric` as strings, dates as days since 1970-01-01, `timestamptz` as ISO-8601) |
 | `source_ts_ms` | commit time in the source database (epoch ms) |
-| `lsn` | Postgres log sequence number of the change; orders changes of one row |
+| `lsn` | Postgres log sequence number of the change; orders changes of one row. Every snapshot (`op = r`) record carries the snapshot's LSN |
 | `kafka_topic`, `kafka_partition`, `kafka_offset` | where the event came from; unique together, which makes reloading idempotent |
 | `ingested_at` | when the loader stored it |
 
@@ -118,6 +121,8 @@ Rp 2,000,000 · **RR4_utilization** account exposure / limit > 95%.
 | `fault_log` | every injected fault: `fault_type`, `injected_at`, `details` (jsonb). Time to detect is measured from `injected_at` |
 | `chaos` | switches the services read, e.g. `drop_next_batch` (the loader loses its next batch) |
 
-Data-quality checks (`check_type`): `freshness`, `raw_duplicate_lsn`, `lsn_regression`,
-`schema_drift` (against `infra/contracts/*.yml`), `invalid_values`, `volume_anomaly`,
+Data-quality checks (`check_type`): `freshness`, `raw_duplicate_lsn` (a change loaded twice),
+`lsn_regression` (an unseen older version loaded after a newer one), `schema_drift` (against
+`infra/contracts/*.yml`), `invalid_values` (one result per rule: `transactions.amount`,
+`transactions.tenor_months`), `volume_anomaly`,
 `reconciliation`, plus `dbt_test` for dbt test results recorded by Airflow.

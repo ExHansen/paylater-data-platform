@@ -62,3 +62,19 @@ def test_rebuild_envelope_has_debezium_shape():
     value = json.loads(rebuild_envelope("transactions", row))
     assert value["op"] == "u" and value["after"]["channel"] == "web"
     assert value["source"]["lsn"] == 123 and value["source"]["table"] == "transactions"
+
+
+def test_fault_targets_name_known_faults():  # review I6: per-rule attribution
+    from pdp.simulator.faults import FAULT_TARGET
+
+    assert set(FAULT_TARGET) <= set(FAULTS)
+    assert FAULT_TARGET["invalid_amount"] != FAULT_TARGET["invalid_tenor"]
+
+
+def test_out_of_order_produces_an_unseen_older_version():  # review I6
+    from pdp.simulator.faults import late_version
+
+    first_update = {"op": "u", "lsn": 5000, "after": {"channel": "web"}}
+    late = late_version(first_update)
+    assert late["lsn"] == 4999 and late["after"] == first_update["after"]
+    assert first_update["lsn"] == 5000  # the stored row is not modified
