@@ -43,3 +43,14 @@ def test_pii_is_hashed(dbt_built):
         ).fetchall()
     }
     assert not columns & {"nik", "phone", "full_name"}
+
+
+@pytest.mark.pg
+def test_reconciliation_queries_match_the_real_models(dbt_built):
+    # The app tables are empty here: every query must still run against the real dbt models.
+    from pdp.config import Settings
+    from pdp.quality.checks import TABLES, check_reconciliation
+
+    results = check_reconciliation(Settings(_env_file=None), dbt_built, dbt_built)
+    assert sorted(r.target for r in results) == sorted(TABLES)
+    assert {r.target: r.status for r in results}["transactions"] == "fail"
