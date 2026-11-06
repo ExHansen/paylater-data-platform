@@ -24,6 +24,7 @@ from pdp.stream.features import AccountWindow, Features, from_state, to_state, u
 from pdp.stream.rules import evaluate, utilization
 
 log = logging.getLogger("pdp.stream")
+BACKFILL_AGE_MS = 60 * 60 * 1000  # purchases older than this when processed raise no alerts
 
 
 def is_envelope(value) -> bool:
@@ -54,7 +55,8 @@ def purchase_alert(
     after = decode_row("transactions", value["after"])
     ts_ms = int(after["created_at"].timestamp() * 1000)
     features = update(window, ts_ms, after["amount"], after["device_id"])
-    if value["op"] != "c":
+    if value["op"] != "c" or now_ms - ts_ms > BACKFILL_AGE_MS:
+        # snapshot rows and purchases dated long before now (backfills) only feed the window
         return features, None
     rules = evaluate(features, after["amount"], credit_limit, exposure)
     if not rules:

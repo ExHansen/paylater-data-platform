@@ -41,7 +41,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pdp -d warehouse"]
+      # TCP + a table from the last init script: healthy only once initialisation has finished
+      test: ["CMD-SHELL", "psql -h localhost -U pdp -d warehouse -tAc 'select 1 from ops.chaos limit 1' | grep -q 1"]
       interval: 5s
       timeout: 5s
       retries: 60
@@ -102,7 +103,7 @@ services:
     mem_limit: 1g
 
   connect-init:
-    # One-shot: registers the Postgres CDC connector once Kafka Connect answers.
+    # Registers the Postgres CDC connector, then stays up (healthy) so `up --wait` can wait for it.
     image: quay.io/debezium/connect:3.7.0.Final
     profiles: [core, full]
     depends_on:
@@ -113,7 +114,12 @@ services:
       CONNECT_URL: http://connect:8083
     volumes:
       - ./infra/connect:/infra/connect:ro
-    restart: "no"
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/registered"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+    restart: on-failure
     mem_limit: 128m
 
   simulator:

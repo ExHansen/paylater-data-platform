@@ -48,6 +48,8 @@ def run(settings: Settings | None = None) -> None:
             "group.id": "pdp-raw-loader",
             "enable.auto.commit": False,
             "auto.offset.reset": "earliest",
+            # pick up topics Debezium creates after we subscribed (default refresh is 5 min)
+            "topic.metadata.refresh.interval.ms": 10000,
         }
     )
     consumer.subscribe([f"^{settings.topic_prefix}\\.public\\..*"])
