@@ -55,5 +55,5 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.11"
-      - run: uv sync --locked
+      - run: uv sync --locked --all-extras
       - run: uv run pytest -m pg -q -rs
