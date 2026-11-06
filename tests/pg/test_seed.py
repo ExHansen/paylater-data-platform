@@ -1,10 +1,8 @@
 from datetime import datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from pdp.db import apply_sql_file
 from pdp.simulator.generator import generate_history
 from pdp.simulator.seed import AlreadySeeded, seed_connection, write_history
 
@@ -12,9 +10,8 @@ NOW = datetime(2026, 11, 6, 12, 0, tzinfo=ZoneInfo("Asia/Jakarta"))
 
 
 @pytest.fixture
-def app_db(pg_conn):
-    apply_sql_file(pg_conn, Path("infra/postgres/10_app.sql"))
-    return pg_conn
+def app_db(fresh_db):
+    return fresh_db
 
 
 @pytest.mark.pg
