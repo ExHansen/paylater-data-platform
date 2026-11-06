@@ -50,6 +50,8 @@ SCHEDULE: tuple[tuple[float, str, dict], ...] = (
 LIVE_MINUTES = 16
 # The seed lands in raw as one burst of purchases; keep it out of the volume baseline.
 SEED_TO_LIVE_MIN_S = 150
+# Live traffic is ~30 messages/s and Quix commits every 5 s, so a caught-up stream lags < 500.
+STREAM_CAUGHT_UP_LAG = 500
 MARTS = (
     "dim_user",
     "fct_transactions",
@@ -163,6 +165,27 @@ def _dbt_build(settings: Settings) -> str | None:
         if str(r.status) in ("error", "fail")
     ]
     return "; ".join(failed[:10]) or "dbt build failed"
+
+
+def consumer_lag(bootstrap: str, group: str) -> int:
+    """Messages a consumer group has not committed yet, summed over its partitions."""
+    from confluent_kafka import Consumer, ConsumerGroupTopicPartitions, TopicPartition
+    from confluent_kafka.admin import AdminClient
+
+    admin = AdminClient({"bootstrap.servers": bootstrap})
+    request = [ConsumerGroupTopicPartitions(group)]
+    committed = admin.list_consumer_group_offsets(request)[group].result(timeout=15)
+    if not committed.topic_partitions:
+        raise RuntimeError(f"consumer group {group} has not committed yet")
+    probe = Consumer({"bootstrap.servers": bootstrap, "group.id": f"{group}-lag-probe"})
+    try:
+        lag = 0
+        for tp in committed.topic_partitions:
+            low, high = probe.get_watermark_offsets(TopicPartition(tp.topic, tp.partition), 10)
+            lag += max(0, high - (tp.offset if tp.offset >= 0 else low))
+        return lag
+    finally:
+        probe.close()
 
 
 def raw_caught_up(dsn: str, counts: dict[str, int]) -> bool:
@@ -323,6 +346,13 @@ def run(
             > 0
         ),
         timeout_s=240,
+    )
+    # Live alerts are only measured once the risk stream has worked through the seeded history.
+    wait_for(
+        "the risk stream to catch up with the seed",
+        lambda: consumer_lag(s.kafka_bootstrap, "pdp-risk") < STREAM_CAUGHT_UP_LAG,
+        timeout_s=900,
+        every_s=10,
     )
     _sleep_until(seeded_at + timedelta(seconds=SEED_TO_LIVE_MIN_S))
     result.live_started_at = live_start = datetime.now(UTC)
