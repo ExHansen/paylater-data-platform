@@ -36,3 +36,21 @@ def test_snapshot_purchase_updates_window_without_alert():
     window = AccountWindow()
     _, alert = purchase_alert({**CREATE, "op": "r"}, window, Decimal("1"), Decimal("0"), now_ms=0)
     assert alert is None and len(window.events) == 1
+
+
+def test_redelivered_purchase_is_ignored():  # Kafka delivers at least once
+    window = AccountWindow()
+    now = CREATE["source"]["ts_ms"] + 1200
+    _, first = purchase_alert(CREATE, window, Decimal("800000"), Decimal("0"), now_ms=now)
+    features, again = purchase_alert(
+        CREATE, window, Decimal("800000"), Decimal("0"), now_ms=now + 60_000
+    )
+    assert first is not None and again is None and features is None
+    assert len(window.events) == 1
+
+
+def test_alert_id_is_stable_per_purchase():
+    now = CREATE["source"]["ts_ms"] + 1200
+    _, a = purchase_alert(CREATE, AccountWindow(), Decimal("800000"), Decimal("0"), now_ms=now)
+    _, b = purchase_alert(CREATE, AccountWindow(), Decimal("800000"), Decimal("0"), now_ms=now)
+    assert a["alert_id"] == b["alert_id"]

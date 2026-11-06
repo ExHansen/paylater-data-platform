@@ -1,7 +1,7 @@
 from collections import deque
 from decimal import Decimal
 
-from pdp.stream.features import AccountWindow, from_state, to_state, update
+from pdp.stream.features import AccountWindow, from_state, has_seen, to_state, update
 
 D1 = Decimal("100000")
 
@@ -41,3 +41,15 @@ def test_state_roundtrip():
     update(w, 5, Decimal("12.50"), "x")
     back = from_state(to_state(w))
     assert back == w and isinstance(back.events[0][1], Decimal)
+
+
+def test_seen_purchases_survive_the_state_roundtrip():
+    w = AccountWindow()
+    update(w, 1_000, Decimal("10"), "d1", txn_id="t1")
+    assert has_seen(w, "t1") and not has_seen(w, "t2")
+    assert has_seen(from_state(to_state(w)), "t1")
+
+
+def test_state_saved_without_txn_ids_still_loads():
+    w = from_state({"events": [[1_000, "10"]], "devices": {}})
+    assert len(w.events) == 1 and not has_seen(w, "t1")

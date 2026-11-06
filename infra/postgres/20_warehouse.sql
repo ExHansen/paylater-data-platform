@@ -149,6 +149,15 @@ CREATE TABLE IF NOT EXISTS online.account_exposure (
     updated_at  timestamptz NOT NULL DEFAULT now()
 );
 
+-- Changes already applied to account_exposure (row + LSN); redelivered events are skipped.
+CREATE TABLE IF NOT EXISTS online.exposure_changes (
+    source_table  text NOT NULL,
+    row_id        text NOT NULL,
+    lsn           bigint NOT NULL,
+    applied_at    timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (source_table, row_id, lsn)
+);
+
 CREATE TABLE IF NOT EXISTS online.account_limits (
     account_id    uuid PRIMARY KEY,
     credit_limit  numeric(18, 2) NOT NULL,
