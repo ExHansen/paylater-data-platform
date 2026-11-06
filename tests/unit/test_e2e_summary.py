@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from pdp.e2e import OVERRIDES, SCHEDULE, E2EResult, write_summary
+from pdp.e2e import OVERRIDES, SCHEDULE, E2EResult, timeline_lines, write_summary
 from pdp.quality.mttd import MttdRow
 from pdp.simulator.faults import FAULTS
 
@@ -40,3 +40,27 @@ def test_summary_shows_detection_and_state_before_the_fault(tmp_path: Path):
     assert "| Alert latency p95 | 1,450 ms |" in text or "| Alert latency p95 | 1,451 ms |" in text
     assert "| RR1_velocity | 4 |" in text
     assert "Task failed: dbt_build" in text
+
+
+def test_timeline_shows_each_run_with_its_worst_result():
+    rows = [
+        # ordered by run_at, target, as the query returns them; ties keep the first row
+        (T0 - timedelta(seconds=40), "pass", "transactions", "lag 0.1 min"),
+        (T0 - timedelta(seconds=40), "pass", "users", "lag 0.0 min"),
+        (T0 + timedelta(seconds=90), "fail", "transactions", "lag 1.4 min"),
+        (T0 + timedelta(seconds=90), "pass", "users", "lag 0.0 min"),
+    ]
+    assert timeline_lines(rows, T0) == [
+        "-0.7 min  pass  transactions: lag 0.1 min",
+        "+1.5 min  fail  transactions: lag 1.4 min",
+    ]
+
+
+def test_summary_reports_check_run_time_and_timelines(tmp_path: Path):
+    result = E2EResult(
+        check_run_seconds=[10.0, 14.0, 30.0],
+        timelines={"loader_stall": ["+1.5 min  fail  transactions: lag 1.4 min"]},
+    )
+    text = write_summary(result, tmp_path / "s.md").read_text(encoding="utf-8")
+    assert "| Data-quality run time | median 14 s, max 30 s (3 runs) |" in text
+    assert "<summary>loader_stall</summary>" in text and "+1.5 min  fail" in text

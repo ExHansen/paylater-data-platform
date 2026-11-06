@@ -6,7 +6,7 @@ Timeline (minutes after live traffic starts):
   5  loader_stall (3 min)
   10 volume_drop (2 min; two minutes after the loader is back, so the volume check is clean)
   12 reconciliation_gap (the first batch after the simulator restarts is lost)
-Checks run every minute; the run ends at minute 16.
+Checks start every minute (on a fixed cadence); the run ends at minute 16.
 
 Thresholds are tightened for the run (OVERRIDES) so each fault is visible within minutes.
 Reconciliation is exact: with the one-minute cut-off, app and staging agree row for row unless
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import threading
 import time
 from collections.abc import Callable
@@ -32,7 +33,7 @@ from pdp.quality.mttd import MttdRow, compute_mttd
 
 WIB = ZoneInfo("Asia/Jakarta")
 OVERRIDES = {
-    "freshness_threshold_min": 2,
+    "freshness_threshold_min": 1,
     "volume_window_min": 1,
     "volume_baseline_windows": 10,
     "reconciliation_tolerance": 0.0,
@@ -78,6 +79,8 @@ class E2EResult:
     airflow_hourly_ok: bool = False
     airflow_hourly_tail: str = ""
     fault_errors: dict[str, str] = field(default_factory=dict)
+    check_run_seconds: list[float] = field(default_factory=list)
+    timelines: dict[str, list[str]] = field(default_factory=dict)
     summary_path: Path = Path("e2e-summary.md")
 
     @property
@@ -104,21 +107,27 @@ def scalar(dsn: str, sql: str, params: tuple = ()):
 
 
 class QualityLoop(threading.Thread):
-    """Runs every data-quality check once a minute until stopped."""
+    """Starts every data-quality check once a minute (fixed cadence) until stopped."""
 
     def __init__(self, settings: Settings, log: Callable[[str], None]):
         super().__init__(daemon=True)
         self.settings, self.log, self.stop_event = settings, log, threading.Event()
+        self.durations: list[float] = []
 
     def run(self) -> None:
+        started = time.monotonic()
+        runs = 0
         while not self.stop_event.is_set():
+            begin = time.monotonic()
             try:
                 results = run_checks(self.settings)
                 failing = [f"{r.check_type}/{r.target}" for r in results if r.status != "pass"]
                 self.log(f"checks: {len(failing)} not passing {failing[:6]}")
             except Exception as exc:  # noqa: BLE001
                 self.log(f"checks errored: {exc}")
-            self.stop_event.wait(60)
+            self.durations.append(time.monotonic() - begin)
+            runs += 1
+            self.stop_event.wait(max(0.0, started + runs * 60 - time.monotonic()))
 
 
 def _inject(settings: Settings, fault: str, opts: dict, errors: dict, log) -> None:
@@ -205,6 +214,25 @@ def _airflow(*args: str):
     )
 
 
+SEVERITY = {"pass": 0, "error": 1, "warn": 2, "fail": 3}
+
+
+def timeline_lines(rows, injected_at: datetime) -> list[str]:
+    """One line per check run: offset from the fault, worst status and its observation.
+
+    `rows` are (run_at, status, target, observed) for one check type, ordered by run_at.
+    """
+    runs: dict[datetime, tuple[str, str, str]] = {}
+    for run_at, status, target, observed in rows:
+        worst = runs.get(run_at)
+        if worst is None or SEVERITY.get(status, 0) > SEVERITY.get(worst[0], 0):
+            runs[run_at] = (status, target, observed)  # ties keep the first row
+    return [
+        f"{(run_at - injected_at).total_seconds() / 60:+.1f} min  {status}  {target}: {observed}"
+        for run_at, (status, target, observed) in sorted(runs.items())
+    ]
+
+
 def collect(settings: Settings, result: E2EResult) -> None:
     since = result.live_started_at or datetime.now(UTC) - timedelta(hours=1)
     with connect(settings.wh_dsn) as wh:
@@ -233,6 +261,14 @@ def collect(settings: Settings, result: E2EResult) -> None:
                 (m.check_type, m.injected_at, m.injected_at),
             ).fetchone()[0]
         ]
+        for m in result.mttd:
+            rows = wh.execute(
+                "SELECT run_at, status, target, observed FROM ops.dq_results "
+                "WHERE check_type = %s AND run_at >= %s - interval '2 minutes' "
+                "AND run_at < %s + interval '6 minutes' ORDER BY run_at, target",
+                (m.check_type, m.injected_at, m.injected_at),
+            ).fetchall()
+            result.timelines[m.fault_type] = timeline_lines(rows, m.injected_at)
         for mart in MARTS:
             count = wh.execute(f"SELECT count(*) FROM marts.{mart}").fetchone()[0]
             result.mart_counts[mart] = count
@@ -264,6 +300,7 @@ def write_summary(result: E2EResult, path: Path) -> Path:
         f"| Airflow DAG import errors | {import_errors} |",
         f"| Airflow `pdp_hourly` test run | {'ok' if result.airflow_hourly_ok else 'failed'} |",
         f"| Regulatory report | {result.report_path or 'not built'} |",
+        f"| Data-quality run time | {_run_time(result.check_run_seconds)} |",
         "",
         "## Risk alerts by rule",
         "",
@@ -280,6 +317,24 @@ def write_summary(result: E2EResult, path: Path) -> Path:
             for m in result.mttd
         ],
         "",
+        "## Detection timelines",
+        "",
+        "Every run of the matching check from two minutes before each fault to six after.",
+        "",
+        *[
+            line
+            for fault, lines in result.timelines.items()
+            for line in (
+                "<details>",
+                f"<summary>{fault}</summary>",
+                "",
+                "```",
+                *lines,
+                "```",
+                "</details>",
+                "",
+            )
+        ],
         "## Mart row counts",
         "",
         *[f"- `{name}`: {count}" for name, count in result.mart_counts.items()],
@@ -302,6 +357,13 @@ def write_summary(result: E2EResult, path: Path) -> Path:
     return path
 
 
+def _run_time(seconds: list[float]) -> str:
+    if not seconds:
+        return "n/a"
+    median = statistics.median(seconds)
+    return f"median {median:.0f} s, max {max(seconds):.0f} s ({len(seconds)} runs)"
+
+
 def _ms(value) -> str:
     return "n/a" if value is None else f"{value:,.0f} ms"
 
@@ -317,7 +379,7 @@ def _sleep_until(moment: datetime) -> None:
 
 
 def run(
-    settings: Settings, live_minutes: float = LIVE_MINUTES, seed_months: int = 3, log=print
+    settings: Settings, live_minutes: float = LIVE_MINUTES, seed_months: int = 6, log=print
 ) -> E2EResult:
     from pdp.cli import compose
     from pdp.reports.regulatory import build_report
@@ -372,6 +434,7 @@ def run(
         thread.join(timeout=300)
     loop.stop_event.set()
     loop.join(timeout=120)
+    result.check_run_seconds = loop.durations
     run_checks(s)  # one last pass
 
     log("final dbt build, Airflow checks and report")
