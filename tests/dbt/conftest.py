@@ -34,6 +34,7 @@ def dbt_built():
         load_fixture(conn)
         conn.commit()
     run_dbt(["build", "--vars", f"{{as_of_date: '{AS_OF}'}}"])
-    conn = psycopg.connect(dsn)
+    # autocommit: an idle transaction here would hold locks and block later schema resets
+    conn = psycopg.connect(dsn, autocommit=True)
     yield conn
     conn.close()
