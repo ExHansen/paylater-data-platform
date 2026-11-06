@@ -1,0 +1,12 @@
+pdp:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('PDP_DBT_HOST', 'localhost') }}"
+      port: "{{ env_var('PDP_DBT_PORT', '5432') | as_number }}"
+      user: "{{ env_var('PDP_DBT_USER', 'pdp') }}"
+      password: "{{ env_var('PDP_DBT_PASSWORD', 'pdp') }}"
+      dbname: "{{ env_var('PDP_DBT_DB', 'warehouse') }}"
+      schema: staging
+      threads: 4

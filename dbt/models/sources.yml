@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: Append-only Debezium change events written by the raw loader (bronze).
+    tables:
+      - name: cdc_users
+      - name: cdc_credit_accounts
+      - name: cdc_merchants
+      - name: cdc_transactions
+      - name: cdc_installments
+      - name: cdc_repayments
