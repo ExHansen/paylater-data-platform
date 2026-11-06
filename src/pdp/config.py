@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     app_dsn: str = "postgresql://pdp:pdp@localhost:5432/paylater_app"
     wh_dsn: str = "postgresql://pdp:pdp@localhost:5432/warehouse"
-    kafka_bootstrap: str = "localhost:9092"
+    kafka_bootstrap: str = "localhost:29092"  # host listener; containers use kafka:9092
     topic_prefix: str = "paylater"
     pii_salt: str = "change-me"
     alert_webhook: str | None = None
