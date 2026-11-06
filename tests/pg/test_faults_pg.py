@@ -1,10 +1,8 @@
 from datetime import datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from pdp.db import apply_sql_file
 from pdp.ops import chaos_enabled
 from pdp.simulator.faults import FaultContext, inject
 from pdp.simulator.generator import generate_history
@@ -14,11 +12,10 @@ NOW = datetime(2026, 11, 6, 12, 0, tzinfo=ZoneInfo("Asia/Jakarta"))
 
 
 @pytest.fixture
-def db(pg_conn):
-    apply_sql_file(pg_conn, Path("infra/postgres/10_app.sql"))
-    apply_sql_file(pg_conn, Path("infra/postgres/20_warehouse.sql"))
-    write_history(pg_conn, generate_history(42, 1, NOW, n_users=30))
-    return pg_conn
+def db(fresh_db):
+    write_history(fresh_db, generate_history(42, 1, NOW, n_users=30))
+    fresh_db.commit()
+    return fresh_db
 
 
 def ctx(conn):
