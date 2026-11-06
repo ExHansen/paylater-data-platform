@@ -198,7 +198,7 @@ def report(month: Annotated[str, typer.Option(help="Month YYYY-MM.")]) -> None:
 
 @app.command()
 def status() -> None:
-    """Service health, consumer lag, freshness and open alerts."""
+    """Service health, freshness and alerts in the last hour."""
     from pdp.db import connect
     from pdp.quality.checks import check_freshness
 
