@@ -107,7 +107,7 @@ Satu instance Postgres memuat dua database:
 | `credit_accounts` | account_id, user_id, credit_limit, status (`active/frozen/closed`), risk_grade (`A`–`E`), created_at, updated_at | perubahan limit menghasilkan riwayat SCD2 |
 | `merchants` | merchant_id, name, category, province, created_at | |
 | `transactions` | txn_id, account_id, merchant_id, amount, tenor_months, monthly_rate, status (`approved/declined/refunded`), channel (`app/web/qr`), device_id, created_at, updated_at | **sengaja tanpa CHECK** pada amount/tenor, supaya "bug aplikasi" bisa lolos ke data |
-| `installments` | installment_id, txn_id, seq, due_date, principal, interest, status (`unpaid/paid`), paid_at, updated_at | dibuat saat transaksi disetujui |
+| `installments` | installment_id, txn_id, account_id, seq, due_date, principal, interest, status (`unpaid/paid`), paid_at, updated_at | dibuat saat transaksi disetujui; `account_id` didenormalisasi supaya stream bisa memperbarui exposure akun |
 | `repayments` | repayment_id, installment_id, account_id, amount, method (`va/ewallet/retail`), paid_at | |
 
 `REPLICA IDENTITY FULL` diaktifkan pada semua tabel, supaya event update dan delete membawa nilai `before`.
@@ -163,6 +163,7 @@ Setiap injeksi menulis satu baris ke `ops.fault_log(fault_id, fault_type, inject
 | `RR3_new_device_high` | `is_new_device` dan `amount > 2.000.000` |
 | `RR4_utilization` | `utilization > 0.95` |
 
+- **Exposure dan limit lintas topik:** disimpan di tabel `online.account_exposure` (bertambah saat transaksi disetujui, berkurang saat cicilan lunas) dan `online.account_limits` (dari topik `credit_accounts`). Konsistensinya *eventual*; utilisasi bisa tertinggal sesaat.
 - **Output alert:** topik `risk.alerts` dan tabel `online.risk_alerts`. Isinya `latency_ms` = waktu alert − `source.ts_ms` (waktu commit di Postgres).
 
 ### 4.5 Raw loader (`src/pdp/loader`)
@@ -222,13 +223,13 @@ Setiap injeksi menulis satu baris ke `ops.fault_log(fault_id, fault_type, inject
 | `lsn_regression` | event yang `lsn`-nya lebih kecil dari versi yang sudah ada untuk PK sama | warn > 0 |
 | `schema_drift` | himpunan field `after` pada event terbaru vs kontrak YAML | fail jika ada field baru atau hilang |
 | `invalid_values` | amount ≤ 0, atau tenor ∉ {1,3,6,12}, pada raw 15 menit terakhir | fail > 0 |
-| `volume_anomaly` | z-score jumlah transaksi per jam vs jam yang sama 14 hari terakhir | fail jika \|z\| > 3 |
+| `volume_anomaly` | z-score jumlah transaksi pada jendela terakhir vs N jendela sebelumnya (default jendela 60 menit, N = 24; e2e memakai 1 menit, N = 10). Baseline bergulir dipakai karena laju live jauh lebih tinggi daripada histori seed | fail jika \|z\| > 3 |
 | `reconciliation` | count dan Σ amount per tabel di OLTP vs staging, dengan as-of yang sama | fail jika selisih > 0,1% |
 
 - **Alert:** setiap `fail` menulis ke `ops.alerts`. Opsional, alert dikirim ke webhook Slack/Telegram lewat `PDP_ALERT_WEBHOOK`.
 - **MTTD** per fault = `run_at` cek gagal pertama yang dipetakan ke jenis fault itu − `injected_at` di `ops.fault_log`. Hasilnya disimpan di view `ops.v_mttd`.
 
-### 4.8 Airflow (`airflow/dags`, Airflow 2.x standalone, LocalExecutor)
+### 4.8 Airflow (`airflow/dags`, Airflow 3.3 standalone, LocalExecutor)
 
 | DAG | Jadwal | Isi |
 |---|---|---|
