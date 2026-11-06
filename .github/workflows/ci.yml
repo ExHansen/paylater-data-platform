@@ -25,3 +25,26 @@ jobs:
           python-version: "3.11"
       - run: uv sync --locked
       - run: uv run pytest -m "not pg and not e2e" -q
+
+  pg:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.15
+        env:
+          POSTGRES_USER: pdp
+          POSTGRES_PASSWORD: pdp
+          POSTGRES_DB: pdp_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pdp -d pdp_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      PDP_TEST_PG_DSN: postgresql://pdp:pdp@localhost:5432/pdp_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - run: uv sync --locked
+      - run: uv run pytest -m pg -q -rs
