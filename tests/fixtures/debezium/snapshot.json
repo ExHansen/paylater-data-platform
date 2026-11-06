@@ -1,0 +1,32 @@
+{
+  "before": null,
+  "after": {
+    "installment_id": "6d8f4b3c-4444-4aaa-8bbb-000000000001",
+    "txn_id": "6d8f4b3c-1111-4aaa-8bbb-000000000001",
+    "account_id": "6d8f4b3c-2222-4aaa-8bbb-000000000001",
+    "seq": 1,
+    "due_date": 20634,
+    "principal": "1000000.00",
+    "interest": "30000.00",
+    "status": "unpaid",
+    "paid_at": null,
+    "updated_at": "2026-05-31T03:00:00Z"
+  },
+  "source": {
+    "version": "3.7.0.Final",
+    "connector": "postgresql",
+    "name": "paylater",
+    "ts_ms": 1793941200123,
+    "snapshot": "true",
+    "db": "paylater_app",
+    "sequence": "[null,\"23000000\"]",
+    "schema": "public",
+    "table": "installments",
+    "txId": 771,
+    "lsn": 23000000,
+    "xmin": null
+  },
+  "transaction": null,
+  "op": "r",
+  "ts_ms": 1793941100000
+}

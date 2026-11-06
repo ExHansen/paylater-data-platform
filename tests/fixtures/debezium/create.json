@@ -1,0 +1,33 @@
+{
+  "before": null,
+  "after": {
+    "txn_id": "6d8f4b3c-1111-4aaa-8bbb-000000000001",
+    "account_id": "6d8f4b3c-2222-4aaa-8bbb-000000000001",
+    "merchant_id": "6d8f4b3c-3333-4aaa-8bbb-000000000001",
+    "amount": "750000.00",
+    "tenor_months": 3,
+    "monthly_rate": "0.0300",
+    "status": "approved",
+    "channel": "app",
+    "device_id": "dev-1",
+    "created_at": "2026-11-06T05:00:00.123456Z",
+    "updated_at": "2026-11-06T05:00:00.123456Z"
+  },
+  "source": {
+    "version": "3.7.0.Final",
+    "connector": "postgresql",
+    "name": "paylater",
+    "ts_ms": 1793941200123,
+    "snapshot": "false",
+    "db": "paylater_app",
+    "sequence": "[null,\"24023128\"]",
+    "schema": "public",
+    "table": "transactions",
+    "txId": 771,
+    "lsn": 24023128,
+    "xmin": null
+  },
+  "transaction": null,
+  "op": "c",
+  "ts_ms": 1793941200456
+}
