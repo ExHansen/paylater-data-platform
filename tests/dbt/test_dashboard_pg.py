@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +21,7 @@ def test_dashboard_renders(dbt_built, monkeypatch):
     from streamlit.testing.v1 import AppTest
 
     monkeypatch.setenv("PDP_WH_DSN", os.environ[PG_DSN_ENV])
-    at = AppTest.from_file("src/pdp/dashboard/app.py", default_timeout=60).run()
+    app_path = Path(__file__).resolve().parents[2] / "src" / "pdp" / "dashboard" / "app.py"
+    at = AppTest.from_file(str(app_path), default_timeout=60).run()
     assert not at.exception
     assert any("Pipeline health" in t.value for t in at.title)
