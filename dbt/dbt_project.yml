@@ -1,0 +1,28 @@
+name: pdp
+version: "1.0.0"
+config-version: 2
+profile: pdp
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Salt for hashing NIK and phone numbers in staging. Override in production.
+  pii_salt: "{{ env_var('PDP_PII_SALT', 'change-me') }}"
+  # Business date (WIB) the marts are computed for; null = today in Asia/Jakarta.
+  as_of_date: null
+
+models:
+  pdp:
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: table
+    marts:
+      +schema: marts
+      +materialized: table

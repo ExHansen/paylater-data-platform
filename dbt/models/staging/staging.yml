@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: stg_users
+    description: Latest state of each user. NIK and phone are salted SHA-256; full name is dropped.
+    columns:
+      - name: user_id
+        data_tests: [unique, not_null]
+      - name: nik_hash
+        meta: {pii: true}
+        data_tests: [not_null]
+      - name: phone_hash
+        meta: {pii: true}
+      - name: kyc_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [pending, verified, rejected]
+
+  - name: stg_credit_accounts
+    columns:
+      - name: account_id
+        data_tests: [unique, not_null]
+      - name: user_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_users')
+                field: user_id
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [active, frozen, closed]
+
+  - name: stg_merchants
+    columns:
+      - name: merchant_id
+        data_tests: [unique, not_null]
+
+  - name: stg_transactions
+    columns:
+      - name: txn_id
+        data_tests: [unique, not_null]
+      - name: account_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_credit_accounts')
+                field: account_id
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [approved, declined, refunded]
+
+  - name: stg_installments
+    columns:
+      - name: installment_id
+        data_tests: [unique, not_null]
+      - name: txn_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_transactions')
+                field: txn_id
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [unpaid, paid]
+
+  - name: stg_repayments
+    columns:
+      - name: repayment_id
+        data_tests: [unique, not_null]
+      - name: method
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [va, ewallet, retail]

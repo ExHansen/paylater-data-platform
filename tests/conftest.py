@@ -41,25 +41,32 @@ def fresh_db():
 
     For code that commits on purpose (fault injection, loader): every test starts clean.
     """
+    import psycopg
+
+    reset_test_database(os.environ[PG_DSN_ENV])
+    conn = psycopg.connect(os.environ[PG_DSN_ENV])
+    try:
+        yield conn
+    finally:
+        conn.rollback()
+        conn.close()
+
+
+def reset_test_database(dsn: str) -> None:
+    """Drop every project schema and re-apply the app + warehouse DDL (committed)."""
     from pathlib import Path
 
     import psycopg
 
     from pdp.db import apply_sql_file
 
-    admin = psycopg.connect(os.environ[PG_DSN_ENV], autocommit=True)
-    admin.execute("DROP PUBLICATION IF EXISTS pdp_pub")
-    admin.execute(
-        "DROP SCHEMA IF EXISTS public, raw, staging, intermediate, marts, online, ops CASCADE"
-    )
-    admin.execute("CREATE SCHEMA public")
-    admin.close()
-    conn = psycopg.connect(os.environ[PG_DSN_ENV])
-    apply_sql_file(conn, Path(APP_DDL))
-    apply_sql_file(conn, Path(WH_DDL))
-    conn.commit()
-    try:
-        yield conn
-    finally:
-        conn.rollback()
-        conn.close()
+    with psycopg.connect(dsn, autocommit=True) as admin:
+        admin.execute("DROP PUBLICATION IF EXISTS pdp_pub")
+        admin.execute(
+            "DROP SCHEMA IF EXISTS public, raw, staging, intermediate, marts, online, ops CASCADE"
+        )
+        admin.execute("CREATE SCHEMA public")
+    with psycopg.connect(dsn) as conn:
+        apply_sql_file(conn, Path(APP_DDL))
+        apply_sql_file(conn, Path(WH_DDL))
+        conn.commit()
