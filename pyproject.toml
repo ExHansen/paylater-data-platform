@@ -1,0 +1,58 @@
+[project]
+name = "paylater-data-platform"
+version = "0.1.0"
+description = "PayLater data platform: CDC, real-time risk features, dbt warehouse, data quality with measured MTTD."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "openpyxl>=3.1",
+    "psycopg[binary]>=3.2",
+    "pydantic-settings>=2.3",
+    "python-dateutil>=2.9",
+    "pyyaml>=6",
+    "rich>=13.7",
+    "typer>=0.13",
+]
+
+[project.scripts]
+pdp = "pdp.cli:app"
+
+[project.optional-dependencies]
+loader = [
+    "confluent-kafka>=2.5",
+]
+stream = [
+    "quixstreams>=3.20,<4",
+]
+dashboard = [
+    "pandas>=2.2.2",
+    "streamlit>=1.50",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pdp"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "pg: needs a Postgres database (PDP_TEST_PG_DSN); skipped otherwise",
+    "e2e: full docker compose scenario; run only by the e2e workflow",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+]

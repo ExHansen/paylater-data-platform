@@ -153,13 +153,16 @@ Then run:
 # tests/unit/test_config.py
 def test_defaults(monkeypatch):
     for k in list(os.environ):
-        if k.startswith("PDP_"): monkeypatch.delenv(k)
+        if k.startswith("PDP_"):
+            monkeypatch.delenv(k)
     s = Settings(_env_file=None)
     assert s.topic_prefix == "paylater" and s.freshness_threshold_min == 10 and s.seed == 42
+
 
 def test_env_override(monkeypatch):
     monkeypatch.setenv("PDP_VOLUME_WINDOW_MIN", "1")
     assert Settings(_env_file=None).volume_window_min == 1
+
 
 # tests/unit/test_markers.py
 @pytest.mark.pg
@@ -230,14 +233,18 @@ Expected: config tests pass, the `pg` test is reported as skipped, and ruff repo
 ```python
 NOW = datetime(2026, 11, 6, 12, 0, tzinfo=ZoneInfo("Asia/Jakarta"))
 
+
 def test_deterministic():
     assert generate_history(42, 2, NOW, n_users=200) == generate_history(42, 2, NOW, n_users=200)
+
 
 def test_installments_sum_to_amount():
     h = generate_history(42, 3, NOW, n_users=300)
     by_txn = defaultdict(Decimal)
-    for i in h.installments: by_txn[i.txn_id] += i.principal
+    for i in h.installments:
+        by_txn[i.txn_id] += i.principal
     assert all(by_txn[t.txn_id] == t.amount for t in h.transactions if t.status == "approved")
+
 
 def test_tenor_mix_and_references():
     h = generate_history(42, 12, NOW, n_users=2000)
@@ -246,10 +253,12 @@ def test_tenor_mix_and_references():
     accounts = {a.account_id for a in h.accounts}
     assert all(t.account_id in accounts for t in h.transactions)
 
+
 def test_worse_grades_default_more():
     h = generate_history(42, 12, NOW, n_users=3000)
     # share of accounts with an installment >90 days overdue at NOW, grade E vs grade A
     assert overdue_share(h, "E") > 2 * overdue_share(h, "A")
+
 
 def test_dates_within_window():
     h = generate_history(42, 6, NOW, n_users=300)
@@ -302,21 +311,33 @@ Expected: PASS, and `generate_history(42, 12, NOW)` with defaults completes in u
 ```python
 # tests/unit/test_init_sql.py  (static checks, no database)
 SQL = Path("infra/postgres/init.sql").read_text()
+
+
 def test_publication_and_replica_identity():
     assert "CREATE PUBLICATION pdp_pub" in SQL
-    for t in TABLES: assert f"ALTER TABLE {t} REPLICA IDENTITY FULL" in SQL
+    for t in TABLES:
+        assert f"ALTER TABLE {t} REPLICA IDENTITY FULL" in SQL
+
+
 def test_raw_tables_are_idempotent_on_offset():
     assert SQL.count("UNIQUE (kafka_topic, kafka_partition, kafka_offset)") == len(TABLES)
+
+
 def test_no_check_constraints_on_amount_or_tenor():
     assert not re.search(r"CHECK\s*\(\s*(amount|tenor_months)", SQL)
+
 
 # tests/pg/test_seed.py
 @pytest.mark.pg
 def test_write_history_counts(pg_conn):
-    apply_app_schema(pg_conn)   # helper: runs the paylater_app part into a scratch schema search_path
+    apply_app_schema(
+        pg_conn
+    )  # helper: runs the paylater_app part into a scratch schema search_path
     counts = write_history(pg_conn, generate_history(42, 1, NOW, n_users=50))
     assert counts["users"] == 50
-    assert pg_conn.execute("select count(*) from installments").fetchone()[0] == counts["installments"]
+    assert (
+        pg_conn.execute("select count(*) from installments").fetchone()[0] == counts["installments"]
+    )
 ```
 
 Ruling allowed: if one `init.sql` cannot serve both the entrypoint (multiple databases) and tests, split it into `infra/postgres/00_databases.sql`, `10_app.sql` and `20_warehouse.sql`. Tests apply only the last two.
@@ -381,14 +402,20 @@ Push, and read the run. Expected: `pg` job green and `test_write_history_counts`
 
 ```python
 def test_tick_rate_matches_poisson_mean():
-    rng = random.Random(1); accts = [view(i) for i in range(500)]
-    counts = [sum(a.kind == "txn" for a in plan_tick(rng, 5.0, 1.0, accts, [], set())) for _ in range(2000)]
+    rng = random.Random(1)
+    accts = [view(i) for i in range(500)]
+    counts = [
+        sum(a.kind == "txn" for a in plan_tick(rng, 5.0, 1.0, accts, [], set()))
+        for _ in range(2000)
+    ]
     assert 4.8 < statistics.mean(counts) < 5.2
+
 
 def test_naughty_bursts_trigger_velocity_shape():
     acts = plan_tick(random.Random(3), 50.0, 1.0, accts, [], naughty={accts[0].account_id})
     burst = [a for a in acts if a.account_id == accts[0].account_id and a.kind == "txn"]
     assert len(burst) == 0 or 5 <= len(burst) <= 8
+
 
 def test_every_fault_maps_to_a_known_check():
     assert set(FAULT_CHECK) == set(FAULTS) and set(FAULT_CHECK.values()) <= set(CHECK_TYPES)
@@ -437,20 +464,27 @@ def test_parse_create():
     ev = parse("paylater.public.transactions", KEY, load("create.json"))
     assert ev.op == "c" and ev.table == "transactions" and ev.before is None and ev.lsn > 0
 
-def test_parse_encodings_exactly():                       # Review Focus 1
+
+def test_parse_encodings_exactly():  # Review Focus 1
     row = decode_row("installments", parse(T_INST, KEY, load("snapshot.json")).after)
     assert row["principal"] == Decimal("1000000.00") and row["due_date"] == date(2026, 6, 30)
     assert row["paid_at"] is None or row["paid_at"].tzinfo is not None
 
+
 def test_tombstone_is_ignored():
     assert parse(T_TXN, KEY, None) is None
 
-def test_unknown_fields_are_preserved():                  # Review Focus 5
+
+def test_unknown_fields_are_preserved():  # Review Focus 5
     ev = parse(T_TXN, KEY, load("drift.json"))
-    assert ev.after["promo_code"] == "HARBOLNAS" and "promo_code" in decode_row("transactions", ev.after)
+    assert ev.after["promo_code"] == "HARBOLNAS" and "promo_code" in decode_row(
+        "transactions", ev.after
+    )
+
 
 def test_malformed_goes_to_dead_letter():
-    with pytest.raises(DeadLetter): parse(T_TXN, KEY, b"{not json")
+    with pytest.raises(DeadLetter):
+        parse(T_TXN, KEY, b"{not json")
 ```
 
 - [ ] **Steps 2–4:** verify fail, implement, verify pass (`uv run pytest tests/unit/test_envelope.py -q`).
@@ -486,14 +520,18 @@ def test_malformed_goes_to_dead_letter():
 def test_batcher_flushes_on_size_or_time():
     b = Batcher(max_size=3, max_wait_s=5)
     assert [b.add(i) for i in range(3)] == [False, False, True]
-    b.drain(); b.add(1); assert b.due(time.monotonic() + 6)
+    b.drain()
+    b.add(1)
+    assert b.due(time.monotonic() + 6)
+
 
 @pytest.mark.pg
-def test_writer_is_idempotent_on_redelivery(wh_conn):         # Review Focus 2
+def test_writer_is_idempotent_on_redelivery(wh_conn):  # Review Focus 2
     msgs = [raw_msg("transactions", offset=o, value=load("create.json")) for o in range(10)]
     assert write_batch(wh_conn, msgs).inserted == 10
     assert write_batch(wh_conn, msgs).inserted == 0
     assert count(wh_conn, "raw.cdc_transactions") == 10
+
 
 @pytest.mark.pg
 def test_dead_letter_and_chaos_drop(wh_conn):
@@ -553,33 +591,44 @@ def test_dead_letter_and_chaos_drop(wh_conn):
 ```python
 def test_windows_count_and_prune():
     w = AccountWindow(deque(), {})
-    for i in range(5): f = update(w, 1_000 + i * 60_000, Decimal("100000"), "d1")
+    for i in range(5):
+        f = update(w, 1_000 + i * 60_000, Decimal("100000"), "d1")
     assert f.txn_count_10m == 5 and f.txn_count_1h == 5
     f = update(w, 1_000 + 11 * 60_000, Decimal("1"), "d1")
-    assert f.txn_count_10m == 5 and f.txn_count_1h == 6       # first event (t=0) left the 10-min window
+    assert f.txn_count_10m == 5 and f.txn_count_1h == 6  # first event (t=0) left the 10-min window
+
 
 def test_new_device_flag_once():
     w = AccountWindow(deque(), {})
     assert update(w, 0, D1, "x").is_new_device and not update(w, 1000, D1, "x").is_new_device
 
-@pytest.mark.parametrize("kwargs,expected", [
-    (dict(count10=5), {"RR1_velocity"}),
-    (dict(amount="850000", limit="1000000"), {"RR2_near_limit"}),
-    (dict(new_device=True, amount="2500000", limit="20000000"), {"RR3_new_device_high"}),
-    (dict(exposure="960000", limit="1000000", amount="10000"), {"RR4_utilization"}),
-])
+
+@pytest.mark.parametrize(
+    "kwargs,expected",
+    [
+        (dict(count10=5), {"RR1_velocity"}),
+        (dict(amount="850000", limit="1000000"), {"RR2_near_limit"}),
+        (dict(new_device=True, amount="2500000", limit="20000000"), {"RR3_new_device_high"}),
+        (dict(exposure="960000", limit="1000000", amount="10000"), {"RR4_utilization"}),
+    ],
+)
 def test_rules(kwargs, expected): ...
+
 
 def test_rules_without_limit_skip_limit_rules():
     assert evaluate(feat(count10=1), Decimal("5000000"), None, None) == []
+
 
 def test_exposure_deltas():
     assert exposure_delta(ev_txn("c", "approved", "300000"))[1] == Decimal("300000")
     assert exposure_delta(ev_inst_paid(principal="100000"))[1] == Decimal("-100000")
     assert exposure_delta(ev_txn("c", "declined", "1")) is None
 
-def test_stream_ignores_unknown_fields():                 # Review Focus 5
-    assert exposure_delta(ev_txn("c", "approved", "1", extra={"promo_code": "X"}))[1] == Decimal("1")
+
+def test_stream_ignores_unknown_fields():  # Review Focus 5
+    assert exposure_delta(ev_txn("c", "approved", "1", extra={"promo_code": "X"}))[1] == Decimal(
+        "1"
+    )
 ```
 
 - [ ] **Steps 2–4:** verify fail, implement, verify (`uv run pytest tests/unit -q`). `app.py` is not unit-tested; it is covered by e2e in Task 16.
@@ -626,16 +675,29 @@ def test_stream_ignores_unknown_fields():                 # Review Focus 5
 
 ```python
 COMPOSE = yaml.safe_load(Path("docker-compose.yml").read_text())
+
+
 def test_profiles_and_memory_limits():
     core = {n for n, s in COMPOSE["services"].items() if "core" in s.get("profiles", [])}
     assert {"postgres", "kafka", "connect", "connect-init", "simulator", "loader", "stream"} <= core
     assert all("mem_limit" in s for s in COMPOSE["services"].values())
+
+
 def test_images_are_pinned():
-    assert all(":" in s["image"] and not s["image"].endswith(":latest")
-               for s in COMPOSE["services"].values() if "image" in s)
+    assert all(
+        ":" in s["image"] and not s["image"].endswith(":latest")
+        for s in COMPOSE["services"].values()
+        if "image" in s
+    )
+
+
 def test_contracts_match_ddl():
     for t in TABLES:
-        assert set(yaml.safe_load(Path(f"infra/contracts/{t}.yml").read_text())["columns"]) == ddl_columns(t)
+        assert set(
+            yaml.safe_load(Path(f"infra/contracts/{t}.yml").read_text())["columns"]
+        ) == ddl_columns(t)
+
+
 def test_connector_config():
     c = json.loads(Path("infra/connect/postgres-cdc.json").read_text())["config"]
     assert c["decimal.handling.mode"] == "string" and c["publication.name"] == "pdp_pub"
@@ -674,11 +736,17 @@ def test_connector_config():
 
 ```python
 @pytest.mark.pg
-def test_staging_picks_latest_lsn(dbt_built):                  # Review Focus 3
-    assert q(dbt_built, "select channel from staging.stg_transactions where txn_id = :t2") == "web"  # v2, not late v1
+def test_staging_picks_latest_lsn(dbt_built):  # Review Focus 3
+    assert (
+        q(dbt_built, "select channel from staging.stg_transactions where txn_id = :t2") == "web"
+    )  # v2, not late v1
+
+
 @pytest.mark.pg
 def test_deleted_rows_are_gone(dbt_built):
     assert q(dbt_built, "select count(*) from staging.stg_repayments where repayment_id = :r3") == 0
+
+
 @pytest.mark.pg
 def test_pii_is_hashed(dbt_built):
     nik_hash = q(dbt_built, "select nik_hash from staging.stg_users limit 1")
@@ -723,15 +791,28 @@ def test_pii_is_hashed(dbt_built):
 def test_twp90_matches_hand_calculation(marts):
     # T1 unpaid since 2026-06-30 (DPD 123): 3,000,000; T3 installment 3 due 2026-07-31 (DPD 92): 4,000,000 outstanding;
     # T2 current: 800,000; T4 current: 500,000  -> 7,000,000 / 8,300,000
-    assert q(marts, "select round(sum(dpd_90_plus)/sum(total_outstanding), 4) from marts.mart_delinquency "
-                    "where as_of_date = '2026-10-31'") == Decimal("0.8434")
+    assert q(
+        marts,
+        "select round(sum(dpd_90_plus)/sum(total_outstanding), 4) from marts.mart_delinquency "
+        "where as_of_date = '2026-10-31'",
+    ) == Decimal("0.8434")
+
+
 @pytest.mark.pg
 def test_scd2_limit_history(marts):
-    assert rows(marts, "select credit_limit, valid_to is null from intermediate.int_credit_limit_history "
-                       "where account_id = :a1 order by valid_from") == [(Decimal("5000000"), False), (Decimal("7500000"), True)]
+    assert rows(
+        marts,
+        "select credit_limit, valid_to is null from intermediate.int_credit_limit_history "
+        "where account_id = :a1 order by valid_from",
+    ) == [(Decimal("5000000"), False), (Decimal("7500000"), True)]
+
+
 @pytest.mark.pg
-def test_wib_month_boundary(marts):                             # Review Focus 4
-    assert q(marts, "select disbursed_amount from marts.mart_portfolio_daily where as_of_date = '2026-10-31'") >= Decimal("500000")
+def test_wib_month_boundary(marts):  # Review Focus 4
+    assert q(
+        marts,
+        "select disbursed_amount from marts.mart_portfolio_daily where as_of_date = '2026-10-31'",
+    ) >= Decimal("500000")
 ```
 
 Recompute `0.8434` once the fixture is final: (3,000,000 + 4,000,000) / (3,000,000 + 800,000 + 4,000,000 + 500,000) = 0.84337 → `0.8434`.
@@ -820,10 +901,16 @@ def test_mttd_pairs_fault_with_first_detection(wh):
 - [ ] **Step 1: Write failing tests**
 
 ```python
-def test_report_month_window_uses_wib():                       # Review Focus 4
+def test_report_month_window_uses_wib():  # Review Focus 4
     assert month_window("2026-10") == (date(2026, 10, 1), date(2026, 10, 31))
+
+
 def test_validate_catches_province_mismatch():
-    assert validate(sample(by_province_total=99)) == ["by_province total 99 != summary outstanding 100"]
+    assert validate(sample(by_province_total=99)) == [
+        "by_province total 99 != summary outstanding 100"
+    ]
+
+
 def test_excel_layout(tmp_path):
     p = write_excel(sample(), tmp_path / "r.xlsx")
     wb = openpyxl.load_workbook(p)
@@ -872,13 +959,19 @@ def test_excel_layout(tmp_path):
 
 ```python
 def test_regulatory_previous_month_uses_wib(monkeypatch):
-    called = {}; monkeypatch.setattr(tasks, "build_report", lambda s, m: called.setdefault("m", m))
-    tasks.regulatory_previous_month(datetime(2026, 11, 1, 19, 0, tzinfo=UTC))  # 2026-11-02 02:00 WIB
+    called = {}
+    monkeypatch.setattr(tasks, "build_report", lambda s, m: called.setdefault("m", m))
+    tasks.regulatory_previous_month(
+        datetime(2026, 11, 1, 19, 0, tzinfo=UTC)
+    )  # 2026-11-02 02:00 WIB
     assert called["m"] == "2026-10"
-def test_dbt_results_mapping(tmp_path): ...                     # sample run_results.json -> rows
+
+
+def test_dbt_results_mapping(tmp_path): ...  # sample run_results.json -> rows
 def test_dag_files_only_call_pdp_tasks():
     for f in Path("airflow/dags").glob("*.py"):
-        tree = ast.parse(f.read_text()); assert "pdp.tasks" in f.read_text() and compile(tree, f, "exec")
+        tree = ast.parse(f.read_text())
+        assert "pdp.tasks" in f.read_text() and compile(tree, f, "exec")
 ```
 
 DAG import with real Airflow is verified in e2e (Task 16) with `airflow dags list-import-errors`; it must print no errors.
@@ -918,11 +1011,16 @@ DAG import with real Airflow is verified in e2e (Task 16) with `airflow dags lis
 
 ```python
 def test_up_builds_compose_command(monkeypatch):
-    seen = []; monkeypatch.setattr(cli, "_run", lambda cmd, **k: seen.append(cmd) or ok())
+    seen = []
+    monkeypatch.setattr(cli, "_run", lambda cmd, **k: seen.append(cmd) or ok())
     assert runner.invoke(app, ["up", "--profile", "core"]).exit_code == 0
     assert seen[0][-6:] == ["--profile", "core", "up", "-d", "--build", "--wait"]
+
+
 def test_unknown_fault_is_usage_error():
     assert runner.invoke(app, ["fault", "nope"]).exit_code == 2
+
+
 def test_failed_compose_exits_1(monkeypatch): ...
 ```
 
@@ -950,7 +1048,10 @@ def test_failed_compose_exits_1(monkeypatch): ...
 
 ```python
 def test_queries_never_select_pii():
-    for sql in ALL_SQL: assert not re.search(r"\b(nik|phone|full_name)\b", sql)
+    for sql in ALL_SQL:
+        assert not re.search(r"\b(nik|phone|full_name)\b", sql)
+
+
 @pytest.mark.pg
 def test_dashboard_renders(marts_db, monkeypatch):
     monkeypatch.setenv("PDP_WH_DSN", marts_db)
