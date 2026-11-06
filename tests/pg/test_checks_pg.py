@@ -1,5 +1,8 @@
 import json
+import time
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -7,10 +10,12 @@ from pdp.config import Settings
 from pdp.loader.writer import RawMessage, write_batch
 from pdp.ops import log_fault
 from pdp.quality.checks import (
+    TABLES,
     check_freshness,
     check_invalid_values,
     check_lsn_regression,
     check_raw_duplicate_lsn,
+    check_reconciliation,
     check_schema_drift,
     run_checks_with,
 )
@@ -98,3 +103,31 @@ def test_mttd_pairs_fault_with_first_detection(fresh_db):
     rows = compute_mttd(fresh_db)
     assert rows[0].check_type == "invalid_values"
     assert rows[0].mttd_seconds == pytest.approx(70, abs=1)
+
+
+@pytest.mark.pg
+def test_reconciliation_is_exact_and_catches_one_lost_installment(fresh_db):
+    from pdp.simulator.generator import generate_history
+    from pdp.simulator.seed import write_history
+
+    now = datetime.now(ZoneInfo("Asia/Jakarta"))
+    write_history(fresh_db, generate_history(7, 2, now, n_users=25, n_merchants=5))
+    for table in TABLES:  # staging views straight over the app tables stand in for dbt
+        fresh_db.execute(f"CREATE VIEW staging.stg_{table} AS SELECT * FROM public.{table}")
+        fresh_db.execute(
+            f"INSERT INTO raw.cdc_{table} (op, source_ts_ms, lsn, kafka_topic, kafka_partition, "
+            "kafka_offset) VALUES ('c', %s, 1, 't', 0, 0)",
+            (int(time.time() * 1000),),
+        )
+    exact = Settings(_env_file=None, reconciliation_tolerance=0.0)
+
+    def statuses():
+        return {r.target: r.status for r in check_reconciliation(exact, fresh_db, fresh_db)}
+
+    assert statuses() == {table: "pass" for table in TABLES}
+    lost = fresh_db.execute("SELECT installment_id FROM installments LIMIT 1").fetchone()[0]
+    fresh_db.execute(
+        "CREATE OR REPLACE VIEW staging.stg_installments AS SELECT * FROM public.installments "
+        f"WHERE installment_id <> '{lost}'"
+    )
+    assert statuses() == {table: "fail" if table == "installments" else "pass" for table in TABLES}

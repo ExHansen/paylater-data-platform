@@ -168,6 +168,22 @@ def check_volume_anomaly(settings, wh, app) -> list[CheckResult]:
     ]
 
 
+# Installments have no creation time of their own; they are created with their purchase and
+# counted by its created_at, so the raw tables of both must have caught up to the cut-off.
+RECONCILE_CUTOFF_TABLES = {"installments": ("installments", "transactions")}
+
+
+def _count_up_to(table: str, prefix: str, cut: str) -> str:
+    """Rows of `table` created up to the cut-off; prefix "" for the app, "staging.stg_" for dbt."""
+    if table == "installments":
+        return (
+            f"SELECT count(*) FROM {prefix}installments AS i "
+            f"JOIN {prefix}transactions AS t USING (txn_id) WHERE t.created_at <= {cut}"
+        )
+    column = "paid_at" if table == "repayments" else "created_at"
+    return f"SELECT count(*) FROM {prefix}{table} WHERE {column} <= {cut}"
+
+
 def check_reconciliation(settings, wh, app) -> list[CheckResult]:
     """Row counts (and purchase amounts) in the app vs staging, up to a common cut-off.
 
@@ -175,19 +191,18 @@ def check_reconciliation(settings, wh, app) -> list[CheckResult]:
     count as missing.
     """
     results = []
+    cut = "to_timestamp(%s / 1000.0)"
     for table in TABLES:
-        cutoff_ms = _scalar(wh, f"SELECT max(source_ts_ms) - 60000 FROM raw.cdc_{table}")
-        if cutoff_ms is None:
+        newest = [
+            _scalar(wh, f"SELECT max(source_ts_ms) FROM raw.cdc_{source}")
+            for source in RECONCILE_CUTOFF_TABLES.get(table, (table,))
+        ]
+        if None in newest:
             results.append(CheckResult("reconciliation", table, "pass", "nothing loaded yet", "-"))
             continue
-        column = "created_at" if table != "repayments" else "paid_at"
-        cut = "to_timestamp(%s / 1000.0)"
-        app_count = _scalar(
-            app, f"SELECT count(*) FROM {table} WHERE {column} <= {cut}", (cutoff_ms,)
-        )
-        wh_count = _scalar(
-            wh, f"SELECT count(*) FROM staging.stg_{table} WHERE {column} <= {cut}", (cutoff_ms,)
-        )
+        cutoff_ms = min(newest) - 60_000
+        app_count = _scalar(app, _count_up_to(table, "", cut), (cutoff_ms,))
+        wh_count = _scalar(wh, _count_up_to(table, "staging.stg_", cut), (cutoff_ms,))
         diff = pct_diff(app_count, wh_count)
         observed = f"app {app_count} vs warehouse {wh_count}"
         if table == "transactions":
