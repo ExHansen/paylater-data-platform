@@ -46,6 +46,8 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# The e2e scenario starts the whole stack (~25 min); it runs only when asked: pytest -m e2e
+addopts = ["-m", "not e2e"]
 markers = [
     "pg: needs a Postgres database (PDP_TEST_PG_DSN); skipped otherwise",
     "e2e: full docker compose scenario; run only by the e2e workflow",
