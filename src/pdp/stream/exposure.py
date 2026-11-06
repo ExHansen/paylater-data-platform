@@ -27,7 +27,8 @@ def exposure_delta(event: CdcEvent) -> tuple[UUID, Decimal] | None:
         ):
             return UUID(after["account_id"]), -Decimal(str(after["amount"]))
     if event.table == "installments" and after.get("status") == "paid":
-        if event.op == "r" or (event.op == "u" and before.get("status") == "unpaid"):
+        # created/snapshotted already paid (seeded history), or paid by an update
+        if event.op in ("c", "r") or (event.op == "u" and before.get("status") == "unpaid"):
             return UUID(after["account_id"]), -Decimal(str(after["principal"]))
     return None
 

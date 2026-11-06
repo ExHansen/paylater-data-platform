@@ -50,3 +50,9 @@ def test_no_delta_cases():
 def test_stream_ignores_unknown_fields():  # Review Focus 5
     event = ev_txn("c", "approved", "1", extra={"promo_code": "X"})
     assert exposure_delta(event)[1] == Decimal("1")
+
+
+def test_installment_inserted_already_paid_reduces_exposure():
+    # `pdp seed` after the stack is up inserts historical installments that are already paid.
+    assert exposure_delta(ev_inst("c", None, "paid"))[1] == Decimal("-100000")
+    assert exposure_delta(ev_inst("c", None, "unpaid")) is None
