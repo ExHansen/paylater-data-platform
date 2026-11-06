@@ -1,0 +1,24 @@
+{
+  "name": "paylater-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "pdp_cdc",
+    "database.password": "pdp_cdc",
+    "database.dbname": "paylater_app",
+    "topic.prefix": "paylater",
+    "publication.name": "pdp_pub",
+    "publication.autocreate.mode": "disabled",
+    "slot.name": "pdp_slot",
+    "table.include.list": "public.users,public.credit_accounts,public.merchants,public.transactions,public.installments,public.repayments",
+    "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "value.converter.schemas.enable": "false",
+    "decimal.handling.mode": "string",
+    "snapshot.mode": "initial",
+    "tombstones.on.delete": "true"
+  }
+}

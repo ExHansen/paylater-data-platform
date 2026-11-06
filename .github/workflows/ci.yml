@@ -15,6 +15,8 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check
       - run: uv run ruff format --check
+      - run: docker compose --profile core config -q
+      - run: docker compose --profile full config -q
 
   unit:
     runs-on: ubuntu-latest

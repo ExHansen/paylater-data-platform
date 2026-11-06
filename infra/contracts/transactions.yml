@@ -1,0 +1,14 @@
+# Expected CDC fields for public.transactions. A difference raises the schema_drift check.
+table: transactions
+columns:
+  - txn_id
+  - account_id
+  - merchant_id
+  - amount
+  - tenor_months
+  - monthly_rate
+  - status
+  - channel
+  - device_id
+  - created_at
+  - updated_at

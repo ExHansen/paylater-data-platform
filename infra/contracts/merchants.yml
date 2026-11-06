@@ -1,0 +1,8 @@
+# Expected CDC fields for public.merchants. A difference raises the schema_drift check.
+table: merchants
+columns:
+  - merchant_id
+  - name
+  - category
+  - province
+  - created_at
