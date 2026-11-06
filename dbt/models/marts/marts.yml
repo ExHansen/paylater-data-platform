@@ -1,0 +1,144 @@
+version: 2
+
+models:
+  - name: dim_user
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: user_id, data_type: uuid, data_tests: [unique, not_null]}
+      - {name: account_id, data_type: uuid}
+      - {name: province, data_type: text, data_tests: [not_null]}
+      - {name: city, data_type: text}
+      - {name: kyc_status, data_type: text}
+      - {name: risk_grade, data_type: text}
+      - {name: credit_limit, data_type: "numeric(18,2)"}
+      - {name: account_status, data_type: text}
+      - {name: created_at, data_type: timestamp with time zone}
+
+  - name: dim_merchant
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: merchant_id, data_type: uuid, data_tests: [unique, not_null]}
+      - {name: merchant_name, data_type: text}
+      - {name: category, data_type: text}
+      - {name: province, data_type: text}
+      - {name: created_at, data_type: timestamp with time zone}
+
+  - name: dim_date
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: date_day, data_type: date, data_tests: [unique, not_null]}
+      - {name: year, data_type: integer}
+      - {name: month, data_type: integer}
+      - {name: day, data_type: integer}
+      - {name: iso_day_of_week, data_type: integer}
+      - {name: is_month_end, data_type: boolean}
+
+  - name: fct_transactions
+    description: Approved, valid purchases (invalid rows are quarantined in staging).
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: txn_id, data_type: uuid, data_tests: [unique, not_null]}
+      - name: account_id
+        data_type: uuid
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_user'), field: account_id}
+      - name: merchant_id
+        data_type: uuid
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_merchant'), field: merchant_id}
+      - {name: amount, data_type: "numeric(18,2)", data_tests: [positive]}
+      - name: tenor_months
+        data_type: integer
+        data_tests:
+          - accepted_values:
+              arguments: {values: [1, 3, 6, 12], quote: false}
+      - {name: monthly_rate, data_type: "numeric(6,4)"}
+      - {name: channel, data_type: text}
+      - {name: created_at, data_type: timestamp with time zone}
+      - {name: created_date_wib, data_type: date}
+
+  - name: fct_installments
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: installment_id, data_type: uuid, data_tests: [unique, not_null]}
+      - name: txn_id
+        data_type: uuid
+        data_tests:
+          - relationships:
+              arguments: {to: ref('fct_transactions'), field: txn_id}
+      - {name: account_id, data_type: uuid}
+      - {name: seq, data_type: integer}
+      - {name: due_date, data_type: date, data_tests: [not_null]}
+      - {name: principal, data_type: "numeric(18,2)"}
+      - {name: interest, data_type: "numeric(18,2)"}
+      - name: status
+        data_type: text
+        data_tests:
+          - accepted_values:
+              arguments: {values: [unpaid, paid]}
+      - {name: paid_at, data_type: timestamp with time zone}
+      - {name: paid_date_wib, data_type: date}
+
+  - name: fct_repayments
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: repayment_id, data_type: uuid, data_tests: [unique, not_null]}
+      - {name: installment_id, data_type: uuid}
+      - {name: account_id, data_type: uuid}
+      - {name: amount, data_type: "numeric(18,2)", data_tests: [positive]}
+      - {name: method, data_type: text}
+      - {name: paid_at, data_type: timestamp with time zone}
+      - {name: paid_date_wib, data_type: date}
+      - {name: due_date, data_type: date}
+      - {name: paid_on_time, data_type: boolean}
+
+  - name: mart_portfolio_daily
+    description: Open principal, active borrowers and lending per snapshot date (WIB).
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: as_of_date, data_type: date, data_tests: [unique, not_null]}
+      - {name: outstanding_principal, data_type: "numeric(18,2)"}
+      - {name: active_borrowers, data_type: integer}
+      - {name: disbursed_amount, data_type: "numeric(18,2)"}
+      - {name: txn_count, data_type: integer}
+
+  - name: mart_delinquency
+    description: >
+      Outstanding principal by DPD bucket per snapshot date and province, plus TWP90
+      (90+ DPD outstanding / total outstanding), the OJK "tingkat wanprestasi 90 hari".
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: as_of_date, data_type: date, data_tests: [not_null]}
+      - {name: province, data_type: text, data_tests: [not_null]}
+      - {name: total_outstanding, data_type: "numeric(18,2)"}
+      - {name: current_amount, data_type: "numeric(18,2)"}
+      - {name: dpd_1_30, data_type: "numeric(18,2)"}
+      - {name: dpd_31_60, data_type: "numeric(18,2)"}
+      - {name: dpd_61_90, data_type: "numeric(18,2)"}
+      - {name: dpd_90_plus, data_type: "numeric(18,2)"}
+      - {name: twp90, data_type: "numeric(8,6)"}
+
+  - name: mart_collections
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: month, data_type: date}
+      - {name: method, data_type: text}
+      - {name: n_repayments, data_type: integer}
+      - {name: amount_collected, data_type: "numeric(18,2)"}
+      - {name: on_time_share, data_type: "numeric(6,4)"}
+
+  - name: mart_merchant_performance
+    config: {contract: {enforced: true}}
+    columns:
+      - {name: merchant_id, data_type: uuid, data_tests: [unique, not_null]}
+      - {name: merchant_name, data_type: text}
+      - {name: category, data_type: text}
+      - {name: province, data_type: text}
+      - {name: txn_count, data_type: integer}
+      - {name: gmv, data_type: "numeric(18,2)"}
+      - {name: buyers, data_type: integer}
+      - {name: outstanding_principal, data_type: "numeric(18,2)"}
+      - {name: dpd_90_plus, data_type: "numeric(18,2)"}

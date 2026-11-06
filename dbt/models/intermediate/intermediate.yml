@@ -1,0 +1,17 @@
+version: 2
+
+models:
+  - name: int_valid_transactions
+    description: Approved purchases with a positive amount and a valid tenor.
+  - name: int_snapshot_dates
+    description: The last 30 days plus the last 12 month-ends (WIB) the portfolio is measured on.
+    columns:
+      - name: snapshot_date
+        data_tests: [unique, not_null]
+  - name: int_installment_dpd
+    description: Open installments on each snapshot date with their days past due.
+    columns:
+      - name: dpd
+        data_tests: [not_null]
+  - name: int_credit_limit_history
+    description: SCD2 credit-limit history derived from CDC before/after images.
