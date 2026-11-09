@@ -67,8 +67,8 @@ flowchart LR
 
 ## Results
 
-Measured in CI on 2026-11-06 ([e2e run 42197939770](https://github.com/ExHansen/paylater-data-platform/actions/runs/42197939770),
-commit `86ce902`). The setup:
+Measured in CI on 2026-11-06 ([e2e run 42197939770](https://github.com/ExHansen/paylater-data-platform/actions/runs/42197939770)).
+The setup:
 - the full Compose stack on a GitHub-hosted runner;
 - six months of seeded history;
 - 16 minutes of live traffic at about 5 purchases per second;
